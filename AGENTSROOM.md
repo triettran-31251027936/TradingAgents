@@ -39,6 +39,11 @@ custom profile from your config file. Set both model IDs if you need pinning.
 3. Run `./scripts/agentsroom.command --help` to verify the launcher.
 4. Start the upstream analysis interactively with `./scripts/agentsroom.command`.
 
+Run `./scripts/agentsroom.command --doctor` first to verify executable discovery
+and construct the real graph offline. It lists all roles and configuration
+choices without making model calls, fetching market data or saving a decision.
+This is an installation check, not a test of account access or financial data.
+
 Example for a **US connectivity check**, not a Vietnam stock mapping:
 
 ```sh
