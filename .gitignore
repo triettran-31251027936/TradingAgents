@@ -220,4 +220,9 @@ __marimo__/
 
 # Enterprise env file (secrets) and generated run reports
 .env.enterprise
+
+# Local AgentsRoom profile, private runtime and generated research reports.
+config/agentsroom.env
+/work/
+/outputs/
 reports/

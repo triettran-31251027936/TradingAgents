@@ -30,6 +30,10 @@ def create_llm_client(
     """
     provider_lower = provider.lower()
 
+    if provider_lower in ("codex_cli", "agy_cli"):
+        from .cli_client import CLIClient
+        return CLIClient(model, base_url, provider=provider_lower, **kwargs)
+
     # Native (non-OpenAI) APIs are matched first so their string check doesn't
     # import the OpenAI client. Everything else is OpenAI-compatible and routes
     # through the provider registry (single source of truth).

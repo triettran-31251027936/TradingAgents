@@ -148,6 +148,47 @@ def test_a_full_run_reaches_a_logged_decision(tmp_path, monkeypatch, offline, st
 
 
 @pytest.mark.unit
+def test_cli_adapter_preserves_the_entire_graph(tmp_path, monkeypatch, offline):
+    """Use the new chat adapter through every original role and tool boundary."""
+    import json
+
+    from tradingagents.llm_clients.cli_client import CLIChatModel
+
+    def respond(self, prompt, schema):
+        for kind, answer in STRUCTURED.items():
+            if set(schema["properties"]) == set(kind.model_json_schema()["properties"]):
+                return answer.model_dump(mode="json")
+        tools_text, history_text = prompt.split("AVAILABLE_TRADINGAGENTS_TOOLS:\n", 1)[1].split(
+            "\nCONVERSATION:\n", 1)
+        tools, history = json.loads(tools_text), json.loads(history_text)
+        calls = []
+        if tools and history[-1]["role"] != "tool":
+            for spec in tools:
+                function = spec["function"]
+                args = {k: v for k, v in ARGS.items() if k in function["parameters"]["properties"]}
+                calls.append({"name": function["name"], "arguments": json.dumps(args)})
+        return {"content": "" if calls else TEXT, "tool_calls": calls}
+
+    monkeypatch.setattr(CLIChatModel, "_execute", respond)
+    model = CLIChatModel(provider="codex_cli", executable="unused", runtime_dir=str(tmp_path))
+    graph = _graph(tmp_path, monkeypatch, model, checkpoint_enabled=True)
+    state, rating = graph.propagate("NVDA", TRADE_DATE)
+    assert rating == "Overweight"
+    for key in ("market_report", "sentiment_report", "news_report", "fundamentals_report",
+                "investment_plan", "trader_investment_plan", "final_trade_decision"):
+        assert state[key].strip(), key
+    assert state["investment_debate_state"]["bull_history"]
+    assert state["investment_debate_state"]["bear_history"]
+    assert state["risk_debate_state"]["aggressive_history"]
+    assert state["risk_debate_state"]["conservative_history"]
+    assert state["risk_debate_state"]["neutral_history"]
+    assert graph.memory_log.load_entries()
+    reports = graph.save_reports(state, "NVDA")
+    assert reports.with_suffix(".html").is_file()
+    assert {"get_stock_data", "get_indicators", "get_news", "get_fundamentals"} <= offline
+
+
+@pytest.mark.unit
 def test_an_interrupted_run_resumes_from_its_checkpoint(tmp_path, monkeypatch, offline):
     model = ScriptedModel(fail_at=12)            # past the analysts, before the decision
     graph = _graph(tmp_path, monkeypatch, model, checkpoint_enabled=True)

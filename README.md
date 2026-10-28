@@ -29,6 +29,10 @@
 
 # TradingAgents: Multi-Agents LLM Financial Trading Framework
 
+This fork adds **Codex CLI and Antigravity (`agy`) CLI backends** while retaining
+the upstream workflow. See [AGENTSROOM.md](AGENTSROOM.md) for setup in AgentsRoom,
+verification scope, and the separate work needed for Vietnam market data.
+
 ## News
 
 <!-- news:start -->
