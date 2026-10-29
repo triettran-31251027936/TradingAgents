@@ -124,6 +124,8 @@ def test_reports_keep_original_and_disagreements_and_append_only_once(tmp_path):
     assert path.read_text() == first and first.startswith(original)
     assert first.count('# Hội đồng phản biện —') == 1
     assert 'Đề nghị sửa' in first and 'Check source date.' in first
+    assert 'Chưa được cả ba chấp thuận' in first
+    assert first.index('Chưa được cả ba chấp thuận') < first.index('# Advisory report')
     assert path.with_suffix('.html').exists()
     assert {p.stem for p in (tmp_path / '7_council').glob('*.md')} == {'codex', 'antigravity', 'deepseek', 'council'}
     assert json.loads((tmp_path / '7_council/transcript.json').read_text())['evidence_sha256'] == result['evidence_sha256']

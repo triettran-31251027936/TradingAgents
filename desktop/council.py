@@ -327,6 +327,10 @@ def stage_title(stage):
 def report(result):
     text = '# Hội đồng phản biện — Codex · Antigravity · DeepSeek\n\n'
     text += '> Phần mở rộng sau quyết định TradingAgents gốc. Không thay thế quyết định hoặc memory gốc.\n\n'
+    if result['status'] == 'completed_with_concerns':
+        text += '> **Chưa được cả ba chấp thuận.** Còn đề nghị chỉnh sửa; bản tổng hợp dưới đây chưa phải kết luận được hội đồng xác nhận. Đọc phần kiểm tra cuối và các bất đồng trước khi sử dụng.\n\n'
+    else:
+        text += '> Cả ba đã chấp thuận bản tổng hợp theo hồ sơ được cung cấp. Điều này không xác minh độc lập dữ liệu nguồn hoặc bảo đảm kết quả đầu tư.\n\n'
     text += f"Hồ sơ: `{result['evidence_sha256']}`. Mỗi bên đã đọc đủ {len(result['packet_hashes'])} phần bằng chứng trước khi thảo luận.\n\n"
     text += result['synthesis']['report'] + '\n\n## Các điểm chưa thống nhất và giới hạn\n\n'
     text += '\n'.join('- ' + x for x in result['synthesis']['unresolved']) or 'Không có điểm bổ sung được người tổng hợp liệt kê.'
