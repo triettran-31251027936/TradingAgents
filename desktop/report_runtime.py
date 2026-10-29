@@ -59,7 +59,49 @@ def enrich_report(path, ticker, state, settings, cfg, html=True):
         parts = _report_parts(state) + [('VI. Model Selection and Transport', 'execution',
                                         [('Execution metadata', 'runtime.md', appendix)])]
         path.with_suffix('.html').write_text(render_report(ticker, state, settings, parts), encoding='utf-8')
+    if state.get('_desktop_council'):
+        write_council(path, state['_desktop_council'], {'ticker': ticker, 'upstream_state': state}, settings, html=html)
     return details
+
+
+def write_council(path, result, evidence, settings, html=True):
+    """Append review idempotently; retain the original recommendation and header."""
+    from desktop.council import LABELS, PROVIDERS, _atomic, report
+    from tradingagents.report_html import render_report
+    from tradingagents.reporting import _report_parts
+    folder = path.parent / '7_council'
+    if folder.is_symlink():
+        raise ValueError('Thư mục báo cáo hội đồng không hợp lệ.')
+    folder.mkdir(exist_ok=True)
+    backup = folder / 'original.json'
+    if not backup.exists():
+        _atomic(backup, {'markdown': path.read_text(encoding='utf-8')})
+    body = json.loads(backup.read_text(encoding='utf-8'))['markdown']
+    appendix = report(result)
+    path.write_text(body + '\n\n' + appendix, encoding='utf-8')
+    _atomic(folder / 'transcript.json', result)
+    metadata_path = path.parent / 'execution.json'
+    if metadata_path.exists() and not metadata_path.is_symlink():
+        details = json.loads(metadata_path.read_text(encoding='utf-8'))
+        details['council'] = {'status': result['status'], 'models': result['config']['models'],
+                              'evidence_sha256': result['evidence_sha256'], 'protocol': result['protocol']}
+        _atomic(metadata_path, details)
+    names = {'codex_cli': 'codex', 'agy_cli': 'antigravity', 'deepseek': 'deepseek'}
+    for provider in PROVIDERS:
+        text = '# ' + LABELS[provider] + '\n\n'
+        for stage, turns in result['turns'].items():
+            text += f"## {stage}\n\n{turns[provider]['analysis']}\n\n"
+        text += '## Kiểm tra cuối\n\n' + json.dumps(result['checks'][provider], ensure_ascii=False, indent=2)
+        (folder / (names[provider] + '.md')).write_text(text, encoding='utf-8')
+    (folder / 'council.md').write_text(appendix, encoding='utf-8')
+    if html:
+        metadata = path.parent / 'execution.json'
+        parts = _report_parts(evidence['upstream_state'])
+        if metadata.exists():
+            parts += [('VI. Model Selection and Transport', 'execution', [
+                ('Execution metadata', 'runtime.md', provenance_markdown(json.loads(metadata.read_text())))])]
+        parts += [('VII. Hội đồng phản biện ba nhà cung cấp', 'council', [('Báo cáo và trao đổi', 'council.md', appendix)])]
+        path.with_suffix('.html').write_text(render_report(evidence['ticker'], evidence['upstream_state'], settings, parts), encoding='utf-8')
 
 
 def transient_report(ticker, state, settings, cfg, render):

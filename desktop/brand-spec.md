@@ -40,3 +40,15 @@ Presets support Codex+DeepSeek and Codex+agy+DeepSeek; inheritance retains the
 original quick/deep configuration. Navigation anchors reduce settings hunting.
 Each routed role displays its provider in the workflow. Readable report
 typography and tables remain the primary result surface.
+
+## Final council extension
+
+Mode: Extension. Preserve navigation, palette, typography, original 13-role
+workflow and document viewer. Add a seventh workflow group and one Settings
+panel for the explicitly requested three-provider final review. The council's
+members and final report are clickable documents. The report library exposes a
+resume action only when an actual evidence request exists. Pending, ingesting,
+discussing, failed and completed-with-concerns states use real process events.
+Evidence is never fabricated to fill an empty council card. Existing role badges
+read saved execution metadata when viewing history, rather than current settings.
+Dials remain variance 3, motion 2, density 7, asset dependence 3, brand fidelity 10.

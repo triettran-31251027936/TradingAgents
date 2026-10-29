@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import threading
+from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import date
 from pathlib import Path
@@ -73,7 +74,7 @@ def config():
 def save_config(value):
     if not isinstance(value, dict):
         raise ValueError('Cấu hình phải là JSON object.')
-    unknown = set(value) - (set(DEFAULT_CONFIG) | {'desktop_role_models'})
+    unknown = set(value) - (set(DEFAULT_CONFIG) | {'desktop_role_models', 'desktop_council'})
     if unknown:
         raise ValueError('Không có tham số: ' + ', '.join(sorted(unknown)))
     value = {k: v for k, v in value.items() if k not in MANAGED}
@@ -85,6 +86,9 @@ def save_config(value):
         if k in value and value[k] < 1:
             raise ValueError(f'{k} phải lớn hơn 0.')
     routes = value.get('desktop_role_models', {})
+    if 'desktop_council' in value:
+        from desktop.council import settings
+        value['desktop_council'] = settings(value['desktop_council'])
     from desktop.model_routing import ROLE_NAMES
     for role, spec in routes.items():
         if role not in ROLE_NAMES or not isinstance(spec, dict) or set(spec) - {'provider', 'model', 'backend_url'}:
@@ -162,6 +166,12 @@ def markdown(text):
     return MarkdownIt('commonmark', {'html': False}).enable('table').render(text)
 
 
+def council_emit(kind, payload):
+    if kind == 'council_message':
+        payload = {**payload, 'html': markdown(payload['text'])}
+    emit(kind, payload)
+
+
 def role_reports(state, *, include_empty_memory=True):
     found = {}
     for name, key in {'Market Analyst': 'market_report', 'Sentiment Analyst': 'sentiment_report',
@@ -229,19 +239,24 @@ def analyze(payload, cfg):
     trade_date = _validate_trade_date(payload.get('date', date.today().isoformat()))
     emit('started', {'ticker': ticker, 'date': trade_date, 'analysts': chosen})
     handler = callback()
-    graph = TradingAgentsGraph(chosen, config=cfg, callbacks=[handler])
+    from desktop.council import EvidenceCollector, collect_logs, settings
+    council_cfg = settings(cfg.get('desktop_council'))
+    collector = EvidenceCollector() if council_cfg['enabled'] else None
+    callbacks = [handler] + ([collector] if collector else [])
+    graph = TradingAgentsGraph(chosen, config=cfg, callbacks=callbacks)
     from desktop.model_routing import apply_role_models
-    apply_role_models(graph, cfg.get('desktop_role_models', {}), [handler])
+    apply_role_models(graph, cfg.get('desktop_role_models', {}), callbacks)
     from tradingagents.agents.rating import run_rating
     from tradingagents.dataflows.config import run_config
     state, published = {}, {}
     memory_finished = False
-    with run_config(cfg), graph.checkpoint_scope(ticker, trade_date, asset, portfolio) as tid:
+    with collect_logs(collector) if collector else nullcontext(), run_config(cfg), graph.checkpoint_scope(ticker, trade_date, asset, portfolio) as tid:
         initial = graph.create_run_state(ticker, trade_date, asset, portfolio)
-        args = graph.propagator.get_graph_args(callbacks=[handler])
+        args = graph.propagator.get_graph_args(callbacks=callbacks)
         if tid:
             args['config']['configurable'] = {'thread_id': tid}
-        for _messages, chunk in graph.stream_run(graph.checkpoint_input(initial), **args):
+        graph_input = graph.checkpoint_input(initial)
+        for _messages, chunk in graph.stream_run(graph_input, **args):
             if chunk:
                 state.update(chunk)
                 # Initial state already has empty memory fields. Those fields
@@ -312,6 +327,23 @@ def analyze(payload, cfg):
                 emit('node', {'name': name, 'status': 'completed'})
     result = {'ticker': ticker, 'date': trade_date, 'rating': rating, **options,
               'report_id': str(path.relative_to(Path(cfg['results_dir']))) if path else None}
+    if council_cfg['enabled']:
+        from desktop.council import _atomic, dossier, report, run
+        evidence = dossier(ticker, trade_date, state, collector.snapshot(), portfolio=portfolio,
+                           resumed=graph_input is None, warnings=collector.warnings)
+        if path:
+            # Upstream decision/report has already succeeded and remains usable
+            # even when a council provider fails. This is also the resume input.
+            _atomic(path.parent / 'council-request.json', {'evidence': evidence,
+                    'council_config': council_cfg, 'settings': graph.run_settings(), 'html': options['html']})
+            emit('council_available', {'report_id': result['report_id']})
+        council = run(evidence, council_cfg, cfg['data_cache_dir'], council_emit, callbacks=[handler])
+        state['_desktop_council'] = council
+        result['council_status'] = council['status']
+        if path:
+            from desktop.report_runtime import write_council
+            write_council(path, council, evidence, graph.run_settings(), html=options['html'])
+        emit('role_report', {'name': 'Hội đồng tổng hợp', 'text': report(council), 'html': markdown(report(council))})
     if options['show'] and not options['save']:
         from desktop.report_runtime import transient_report
         result['preview'] = transient_report(ticker, state, graph.run_settings(), cfg, markdown)
@@ -320,6 +352,18 @@ def analyze(payload, cfg):
 
 def dispatch(action, payload):
     cfg = config()
+    if action == 'review_council':
+        path = report_path(payload.get('id', ''), cfg)
+        request_path = path.parent / 'council-request.json'
+        if request_path.is_symlink() or not request_path.is_file():
+            raise ValueError('Báo cáo này chưa có hồ sơ hội đồng để tiếp tục.')
+        request = json.loads(request_path.read_text(encoding='utf-8'))
+        from desktop.council import run
+        result = run(request['evidence'], request['council_config'], cfg['data_cache_dir'], council_emit,
+                     callbacks=[callback()])
+        from desktop.report_runtime import write_council
+        write_council(path, result, request['evidence'], request['settings'], html=request['html'])
+        return {'report_id': payload['id'], 'council_status': result['status']}
     if action in ('api_key_status', 'save_api_key', 'remove_api_key'):
         from desktop import credentials
         provider = payload.get('provider', 'deepseek')
@@ -386,9 +430,12 @@ def dispatch(action, payload):
             if part.resolve().is_relative_to(path.parent.resolve()):
                 sections.append({'name': part.stem, 'group': part.parent.name,
                                  'text': part.read_text(encoding='utf-8'), 'html': markdown(part.read_text(encoding='utf-8'))})
+        metadata = path.parent / 'execution.json'
+        execution = json.loads(metadata.read_text(encoding='utf-8')) if metadata.is_file() and not metadata.is_symlink() else {}
         return {'markdown': path.read_text(encoding='utf-8'), 'rendered': markdown(path.read_text(encoding='utf-8')),
                 'html': html.read_text(encoding='utf-8') if html.exists() else '',
-                'sections': sections, 'path': str(html if html.exists() else path)}
+                'sections': sections, 'path': str(html if html.exists() else path),
+                'council_can_resume': (path.parent / 'council-request.json').is_file(), 'execution': execution}
     if action == 'memory':
         from tradingagents.memory import TradingMemoryLog
         return {'entries': TradingMemoryLog(cfg).load_entries()}

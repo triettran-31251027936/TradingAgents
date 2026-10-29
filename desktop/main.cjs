@@ -8,7 +8,7 @@ const desktopUserData=path.join(manifest.repo,'work','desktop-userdata');
 fs.mkdirSync(desktopUserData,{recursive:true});app.setPath('userData',desktopUserData);
 let window,active=null,quitting=false;
 const quickActions=new Set(['meta','history','report','memory','save_config','doctor','subscription_status','subscription_redirect','subscription_logout','subscription_models','api_key_status','save_api_key','remove_api_key']);
-const jobActions=new Set(['analyze','backtest','settle','subscription_login','test_provider']);
+const jobActions=new Set(['analyze','backtest','settle','subscription_login','test_provider','review_council']);
 function send(type,payload){if(window&&!window.isDestroyed())window.webContents.send('ta:event',{type,payload});}
 function bridge(action,payload={},long=false){
  return new Promise((resolve,reject)=>{

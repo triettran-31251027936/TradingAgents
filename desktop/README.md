@@ -109,3 +109,27 @@ complete report without adding it to saved history. The clear-checkpoint control
 calls the original utility, requires native confirmation and is blocked during
 a job. A real original-mode UI run resumed its retained checkpoint and completed
 all13 report sections; its earlier provider exit was not replaced with fake output.
+
+### Three-provider evidence council (desktop extension)
+
+`desktop_council` enables an advisory review after the unchanged upstream graph,
+decision logging, memory and report writer succeed. `desktop_role_models` can
+simultaneously distribute the original roles across Codex CLI, agy CLI and
+DeepSeek API. Council models are separately configurable; all three are required.
+
+`council.py` captures returned tool observations, sentiment prefetch model inputs,
+source warnings, portfolio and full returned graph state. It partitions the JSON
+losslessly into UTF-8 packets, sends every packet to every peer, saves receipts
+and waits for all readers before independent reviews. Each subsequent discussion
+round gives every peer all three preceding reviews. DeepSeek edits the synthesis;
+all three check it, with one bounded revision/recheck cycle if needed. Remaining
+concerns are shown instead of forced consensus. No council output overwrites the
+upstream rating or memory, so backtest scoring continues to describe that strategy.
+
+Successful steps are private cached checkpoints. A saved `council-request.json`
+allows the report library's resume action to retry missing council work without
+rerunning the core or recording its decision again. Failure never substitutes a
+provider. Saved artifacts include `7_council/{council,codex,antigravity,deepseek}.md`,
+`transcript.json`, packet hashes and execution metadata. Resumed upstream graphs
+explicitly disclose that earlier raw tool observations may exist only in reports.
+The provider default IDs remain CLI-resolved and are not claimed as verified IDs.
