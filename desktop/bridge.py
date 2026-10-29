@@ -336,6 +336,10 @@ def analyze(payload, cfg):
             # even when a council provider fails. This is also the resume input.
             _atomic(path.parent / 'council-request.json', {'evidence': evidence,
                     'council_config': council_cfg, 'settings': graph.run_settings(), 'html': options['html']})
+            metadata = path.parent / 'execution.json'
+            details = json.loads(metadata.read_text(encoding='utf-8'))
+            details['council'] = {'status': 'pending', 'models': council_cfg['models']}
+            _atomic(metadata, details)
             emit('council_available', {'report_id': result['report_id']})
         council = run(evidence, council_cfg, cfg['data_cache_dir'], council_emit, callbacks=[handler])
         state['_desktop_council'] = council

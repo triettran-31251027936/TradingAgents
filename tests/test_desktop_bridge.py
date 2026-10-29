@@ -542,6 +542,8 @@ def test_council_failure_preserves_upstream_report_memory_and_resumable_request(
     assert len(saved) == 1 and saved[0]['rating'] == 'Hold'
     report = Path(cfg['results_dir']) / saved[0]['id']
     assert (report.parent / 'council-request.json').is_file()
+    import json
+    assert json.loads((report.parent / 'execution.json').read_text())['council']['status'] == 'pending'
     assert 'Hội đồng phản biện' not in report.read_text()
     assert any(k == 'council_available' for k, _ in events)
     assert [x[0] for x in graph.calls].index('record') < [x[0] for x in graph.calls].index('clear')
