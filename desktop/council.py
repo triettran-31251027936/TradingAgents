@@ -303,6 +303,10 @@ def run(evidence, config, cache_dir, emit, *, callbacks=(), factory=_model):
     return result
 
 
+def stage_title(stage):
+    return 'Đánh giá độc lập' if stage == 'independent' else 'Vòng phản biện chéo ' + stage.removeprefix('dialogue_')
+
+
 def report(result):
     text = '# Hội đồng phản biện — Codex · Antigravity · DeepSeek\n\n'
     text += '> Phần mở rộng sau quyết định TradingAgents gốc. Không thay thế quyết định hoặc memory gốc.\n\n'
@@ -318,7 +322,7 @@ def report(result):
         text += ('\n'.join('- ' + x for x in check['concerns']) or 'Không nêu vấn đề bổ sung.') + '\n\n'
     text += '## Trao đổi giữa ba thành viên\n\n'
     for stage, peers in result['turns'].items():
-        text += f'### {stage}\n\n'
+        text += f'### {stage_title(stage)}\n\n'
         for p in PROVIDERS:
             text += f"#### {LABELS[p]}\n\n{peers[p]['analysis']}\n\n"
     return text

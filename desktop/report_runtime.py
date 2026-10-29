@@ -66,7 +66,7 @@ def enrich_report(path, ticker, state, settings, cfg, html=True):
 
 def write_council(path, result, evidence, settings, html=True):
     """Append review idempotently; retain the original recommendation and header."""
-    from desktop.council import LABELS, PROVIDERS, _atomic, report
+    from desktop.council import LABELS, PROVIDERS, _atomic, report, stage_title
     from tradingagents.report_html import render_report
     from tradingagents.reporting import _report_parts
     folder = path.parent / '7_council'
@@ -90,8 +90,10 @@ def write_council(path, result, evidence, settings, html=True):
     for provider in PROVIDERS:
         text = '# ' + LABELS[provider] + '\n\n'
         for stage, turns in result['turns'].items():
-            text += f"## {stage}\n\n{turns[provider]['analysis']}\n\n"
-        text += '## Kiểm tra cuối\n\n' + json.dumps(result['checks'][provider], ensure_ascii=False, indent=2)
+            text += f"## {stage_title(stage)}\n\n{turns[provider]['analysis']}\n\n"
+        check = result['checks'][provider]
+        text += '## Kiểm tra cuối\n\n' + ('Đề nghị sửa' if check['verdict'] == 'revise' else 'Chấp thuận bản tổng hợp') + '\n\n'
+        text += '\n'.join('- ' + x for x in check['concerns']) or 'Không nêu vấn đề bổ sung.'
         (folder / (names[provider] + '.md')).write_text(text, encoding='utf-8')
     (folder / 'council.md').write_text(appendix, encoding='utf-8')
     if html:
