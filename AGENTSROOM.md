@@ -126,3 +126,27 @@ the delivery report.
 - https://learn.chatgpt.com/docs/non-interactive-mode
 - https://antigravity.google/docs/cli/headless/
 - https://agentsroom.dev/guides/getting-started
+
+## Local desktop verification (2026-10-29)
+
+The local customized desktop app is installed as **Tranding Agent.app** with a
+separate candle-chart icon. The original AgentsRoom app is unchanged. This is
+an inspected-binary patch for AgentsRoom 1.229.0, not an upstream AgentsRoom
+source fork. App restarts, opening TradingAgents VN and running the graph doctor
+in its terminal were checked through native computer use. Automatic upstream
+update download/install is disabled in this customized copy.
+
+Run `python scripts/audit_upstream_core.py` to compare the original agents,
+graph, dataflows, memory, backtest, portfolio, reports, configuration and CLI
+entry point against the local `upstream/main` ref. The current snapshot checks
+70 files with no differences. This verifies source preservation only; it does
+not verify data coverage, live model support or investment accuracy.
+
+The complete offline test suite passes (1,432 tests, 104 subtests). CLI adapter
+coverage includes all roles and tool boundaries with scripted model responses.
+That test is distinct from a full real-LLM run. `agy_cli` remains experimental.
+Vietnam coverage is incomplete with the upstream vendor defaults: FPT.VN news
+is unavailable from Yahoo and StockTwits returns 404; FRED also needs its own
+key. Having all graph nodes does not supply missing Vietnam data. A native
+AgentsRoom tile for each TradingAgents node is not implemented; the original
+Python graph is the orchestrator running in an AgentsRoom terminal.
