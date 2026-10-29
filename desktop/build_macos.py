@@ -71,6 +71,7 @@ def main():
                  CFBundleVersion='0.7.1', LSApplicationCategoryType='public.app-category.finance')
     plist.pop('CFBundleURLTypes', None)
     plist.pop('CFBundleDocumentTypes', None)
+    plist.pop('AgentsRoomCachePatch', None)
     plist['ElectronAsarIntegrity'] = {'Resources/app.asar': {'algorithm': 'SHA256', 'hash': digest}}
     plist_path.write_bytes(plistlib.dumps(plist))
     for helper in (args.output / 'Contents/Frameworks').glob('AgentsRoom Helper*.app'):

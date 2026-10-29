@@ -60,7 +60,7 @@ are required for the CLI LLM adapters, but data vendors may have their own keys.
 .venv/bin/ruff check desktop tests/test_desktop*
 ```
 
-The source audit checks 70 original workflow, data, memory, backtest, portfolio,
+The source audit checks 72 original workflow, data, memory, backtest, portfolio,
 report, config and CLI files against pinned upstream commit
 `c4544913a14ed3df5f1ed7b9e8483270ce20682a`; they are unchanged.
 Tests cover a full original graph with every role assigned a distinct model
@@ -76,3 +76,16 @@ was completed by the agent. No live DeepSeek call is claimed without a key.
 Default data coverage for Vietnam remains incomplete (ticker news, StockTwits,
 FRED key and Polymarket connectivity). Source completeness does not establish
 investment accuracy or complete Vietnam data coverage.
+
+The subsequent original-mode UI resume completed all13 result sections and wrote
+a separate timestamped report with transport provenance. Codex concurrency was
+verified with four real simultaneous CLI processes. The default remains the
+original two-tier allocation; per-role assignments are optional extensions.
+See the original setup/conditional-logic modules for the authoritative role map.
+The app now also mirrors clear-checkpoints and show-without-save behavior.
+
+The user separately requested the original AgentsRoom startup-cache patch and
+removal of duplicate app bundles. AgentsRoom 1.229.0 now has bounded mail warmup
+and asynchronous cold-cache reads, with a compressed pre-patch recovery copy.
+Only /Applications/AgentsRoom.app and /Applications/Trading Agents.app remain
+registered/indexed from this app family; prototypes were unregistered and removed.

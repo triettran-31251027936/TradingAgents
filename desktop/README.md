@@ -85,3 +85,27 @@ ignored dotenv file, with mode 0600, retaining unrelated entries. The renderer
 receives a configured boolean, never the stored key. Connection tests are
 explicit user actions and send one small model request. No API call is claimed
 before a real key is supplied.
+
+## Upstream audit follow-up
+
+The default remains the original Quick/Deep allocation. Quick serves the four
+analysts, Bull/Bear, Trader and the three risk analysts; Deep serves Research
+Manager and Portfolio Manager. Memory calls Quick only for due reflections.
+Role overrides are explicitly optional and are not enabled in the original-mode
+live verification. Codex `default` omits --model and ignores user config, so it
+must not be advertised as automatically choosing a distinct stronger Deep model.
+
+The original four-analyst fan-out can issue four Codex CLI requests concurrently;
+the default per-provider limits are Codex4 and agy1 (experimental), adjustable via
+TRADINGAGENTS_CODEX_MAX_CONCURRENCY / TRADINGAGENTS_AGY_MAX_CONCURRENCY (1–8).
+Four real Codex requests succeeded concurrently with four isolated CLI processes.
+API-specific generation controls unavailable in the adapter are reported, not
+claimed to be forwarded. CLI prompt/schema transport is not identical to SDK
+wire messages and does not guarantee identical model behavior.
+
+Each saved report uses a unique timestamped folder and includes execution.json
+plus a model/transport appendix. `show=True, save=False` displays an ephemeral
+complete report without adding it to saved history. The clear-checkpoint control
+calls the original utility, requires native confirmation and is blocked during
+a job. A real original-mode UI run resumed its retained checkpoint and completed
+all13 report sections; its earlier provider exit was not replaced with fake output.

@@ -482,3 +482,42 @@ def test_empty_role_overrides_do_not_change_upstream_checkpoint_signature(deskto
 def test_analyst_selection_is_a_set_in_the_original_cli_order():
     _, chosen, _, _ = bridge.inputs({'ticker': 'FPT.VN', 'analysts': ['news', 'market', 'news']})
     assert chosen == ['market', 'news']
+
+
+@pytest.mark.unit
+def test_repeated_analysis_keeps_each_original_timestamped_report(desktop, monkeypatch):
+    cfg, _ = desktop
+    fake_stream_graph(monkeypatch)
+    payload = {'ticker': 'FPT.VN', 'date': TRADE_DATE}
+    first = bridge.analyze(payload, cfg)
+    second = bridge.analyze(payload, cfg)
+    assert first['report_id'] != second['report_id']
+    assert all((Path(cfg['results_dir']) / item['report_id']).is_file() for item in (first, second))
+    assert len(bridge.history(cfg)) == 2
+
+
+@pytest.mark.unit
+def test_show_without_save_returns_complete_ephemeral_report(desktop, monkeypatch):
+    cfg, _ = desktop
+    fake_stream_graph(monkeypatch)
+    result = bridge.analyze({'ticker': 'FPT.VN', 'date': TRADE_DATE, 'save': False, 'show': True}, cfg)
+    assert result['report_id'] is None
+    assert 'Portfolio Manager' in result['preview']['markdown']
+    assert '<table>' in result['preview']['rendered']
+    assert not list(Path(cfg['results_dir']).rglob('complete_report.md'))
+    assert not list(Path(cfg['data_cache_dir']).glob('preview-*'))
+
+
+@pytest.mark.unit
+def test_clear_checkpoints_calls_original_utility_without_deleting_memory(desktop, monkeypatch):
+    cfg, _ = desktop
+    monkeypatch.setattr(bridge, 'config', lambda: cfg)
+    from tradingagents.graph.checkpointer import get_checkpointer
+    with get_checkpointer(cfg['data_cache_dir'], 'FPT.VN'):
+        pass
+    memory = Path(cfg['memory_log_path'])
+    memory.parent.mkdir(parents=True, exist_ok=True)
+    memory.write_text('keep this memory')
+    result = bridge.dispatch('clear_checkpoints', {})
+    assert result == {'cleared': 1}
+    assert memory.read_text() == 'keep this memory'

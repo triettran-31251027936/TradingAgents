@@ -30,9 +30,15 @@ from pydantic import BaseModel, Field
 from .base_client import BaseLLMClient
 
 logger = logging.getLogger(__name__)
-# All copies and model tiers share a lock per provider. The original graph can
-# fan out its analysts without bursting one person's CLI subscription.
-_LOCKS = {name: threading.Lock() for name in ("codex_cli", "agy_cli")}
+# Stateless requests have private working directories. Bound concurrent CLI
+# processes without serializing Codex's original four-analyst fan-out.
+_LIMITERS: dict[tuple[str, int], threading.BoundedSemaphore] = {}
+_LIMITERS_LOCK = threading.Lock()
+
+
+def _limiter(provider: str, limit: int):
+    with _LIMITERS_LOCK:
+        return _LIMITERS.setdefault((provider, limit), threading.BoundedSemaphore(limit))
 
 
 def _strict_schema(schema: dict) -> dict:
@@ -83,6 +89,7 @@ class CLIChatModel(BaseChatModel):
     model_name: str = "default"
     executable: str
     timeout: float = Field(default=300, gt=0)
+    max_concurrency: int = Field(default=1, ge=1, le=8)
     runtime_dir: str
     tool_specs: list[dict] = Field(default_factory=list)
     response_schema: dict | None = None
@@ -160,7 +167,7 @@ class CLIChatModel(BaseChatModel):
 
     def _execute(self, prompt: str, schema: dict) -> dict:
         Path(self.runtime_dir).mkdir(parents=True, exist_ok=True)
-        with _LOCKS[self.provider], tempfile.TemporaryDirectory(dir=self.runtime_dir) as directory:
+        with _limiter(self.provider, self.max_concurrency), tempfile.TemporaryDirectory(dir=self.runtime_dir) as directory:
             folder = Path(directory)
             schema_path = folder / "schema.json"
             schema_path.write_text(json.dumps(schema), encoding="utf-8")
@@ -194,9 +201,9 @@ class CLIChatModel(BaseChatModel):
                     details = (stdout + "\n" + stderr).lower()
                     reason = "check CLI sign-in, model access and quota in its own terminal."
                     if any(word in details for word in ("usage limit", "rate limit", "quota", "resource_exhausted")):
-                        reason = "CLI usage limit reached; wait for its reset or review the plan limits. Checkpoint is retained."
+                        reason = "CLI usage limit reached; wait for its reset or review the plan limits."
                     elif any(word in details for word in ("not authenticated", "unauthorized", "login required", "sign in again")):
-                        reason = "CLI sign-in required; sign in using the CLI before resuming. Checkpoint is retained."
+                        reason = "CLI sign-in required; sign in using the CLI before resuming."
                     raise RuntimeError(f"{self.provider} exited with code {process.returncode}; {reason}")
             events = [json.loads(line) for line in stdout.splitlines() if line.strip()]
             for event in events:
@@ -271,8 +278,13 @@ class CLIClient(BaseLLMClient):
         runtime = os.environ.get("TRADINGAGENTS_CLI_RUNTIME_DIR") or str(
             Path(build_default_config()["data_cache_dir"]) / "cli-runtime"
         )
+        ignored = [key for key in ("temperature", "max_tokens", "max_retries", "reasoning_effort", "thinking_level", "effort")
+                   if self.kwargs.get(key) is not None]
+        if ignored:
+            logger.warning("%s does not expose these API controls through this adapter: %s", self.provider, ", ".join(ignored))
+        concurrency = int(os.environ.get(f"TRADINGAGENTS_{name.upper()}_MAX_CONCURRENCY", "4" if name == "codex" else "1"))
         return CLIChatModel(
             provider=self.provider, model_name=self.model, executable=executable,
             timeout=float(os.environ.get("TRADINGAGENTS_CLI_TIMEOUT", "300")),
-            runtime_dir=runtime, callbacks=self.kwargs.get("callbacks"),
+            runtime_dir=runtime, callbacks=self.kwargs.get("callbacks"), max_concurrency=concurrency,
         )

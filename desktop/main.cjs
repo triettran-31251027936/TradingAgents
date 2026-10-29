@@ -54,6 +54,7 @@ function checkSender(event){if(!window||event.sender!==window.webContents)throw 
 ipcMain.handle('ta:request',async(event,action,payload)=>{
  checkSender(event);
  if(quickActions.has(action))return bridge(action,payload||{});
+ if(action==='clear_checkpoints'){if(active)throw new Error('Dừng tác vụ đang chạy trước khi xóa checkpoint.');const answer=await dialog.showMessageBox(window,{type:'warning',buttons:['Giữ lại','Xóa checkpoint'],defaultId:0,cancelId:0,title:'Chạy mới',message:'Xóa toàn bộ checkpoint đã lưu?',detail:'Không xóa báo cáo hoặc memory. Các lượt đang dở sẽ không thể tiếp tục từ checkpoint cũ.'});if(answer.response!==1)return {cancelled:true};return bridge('clear_checkpoints');}
  if(action==='status')return active?{action:active.action,payload:active.payload,started:active.started}:null;
  if(action==='start'){
   if(active)throw new Error('Một tác vụ đang chạy. Hãy đợi hoặc dừng tác vụ đó.');

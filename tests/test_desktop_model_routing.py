@@ -101,3 +101,16 @@ def test_backtest_factory_override_is_scoped_and_restored_on_failure(monkeypatch
         backtest.TradingAgentsGraph(config={})
         raise RuntimeError('cell failed')
     assert backtest.TradingAgentsGraph is original and calls == [routes]
+
+
+@pytest.mark.unit
+def test_report_provenance_uses_role_assignments_without_endpoints_or_secrets():
+    from desktop.report_runtime import execution_details, provenance_markdown
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    cfg['desktop_role_models'] = {'Trader': {'provider': 'agy_cli', 'model': 'custom-model',
+                                           'backend_url': 'https://private.invalid/key-secret'}}
+    details = execution_details(cfg)
+    assert details['mode'] == 'per_role_extension'
+    assert details['models']['Trader'] == {'provider': 'agy_cli', 'requested_model': 'custom-model'}
+    assert 'private.invalid' not in str(details) and 'key-secret' not in str(details)
+    assert 'custom-model' in provenance_markdown(details)

@@ -271,8 +271,19 @@ def analyze(payload, cfg):
     rating = run_rating(state)
     path = None
     if options['save']:
-        target = Path(cfg['results_dir']) / ticker / trade_date
+        base = graph.default_report_path(ticker)
+        for suffix in range(10000):
+            target = base if suffix == 0 else base.with_name(base.name + f'_{suffix}')
+            try:
+                target.mkdir(parents=True, exist_ok=False)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise RuntimeError('Không tạo được thư mục báo cáo mới.')
         path = graph.save_reports(state, ticker, target, html=options['html'])
+        from desktop.report_runtime import enrich_report
+        enrich_report(path, ticker, state, graph.run_settings(), cfg, html=options['html'])
         memory = role_reports(state).get('Memory Log')
         if memory:
             folder = path.parent / '6_memory'
@@ -299,8 +310,12 @@ def analyze(payload, cfg):
         for name, key in pairs:
             if state.get(state_key, {}).get(key):
                 emit('node', {'name': name, 'status': 'completed'})
-    return {'ticker': ticker, 'date': trade_date, 'rating': rating, **options,
-            'report_id': str(path.relative_to(Path(cfg['results_dir']))) if path else None}
+    result = {'ticker': ticker, 'date': trade_date, 'rating': rating, **options,
+              'report_id': str(path.relative_to(Path(cfg['results_dir']))) if path else None}
+    if options['show'] and not options['save']:
+        from desktop.report_runtime import transient_report
+        result['preview'] = transient_report(ticker, state, graph.run_settings(), cfg, markdown)
+    return result
 
 
 def dispatch(action, payload):
@@ -356,6 +371,9 @@ def dispatch(action, payload):
             result['role_models'] = {role: {k: spec[k] for k in ('provider', 'model')}
                                      for role, spec in cfg['desktop_role_models'].items()}
         return result
+    if action == 'clear_checkpoints':
+        from tradingagents.graph.checkpointer import clear_all_checkpoints
+        return {'cleared': clear_all_checkpoints(cfg['data_cache_dir'])}
     if action == 'history':
         return history(cfg)
     if action == 'report':

@@ -163,3 +163,36 @@ def test_known_cli_errors_are_actionable_without_echoing_provider_secrets(cli_mo
     with pytest.raises(RuntimeError, match=expected) as error:
         cli_model.invoke("Analyze")
     assert "private-key-do-not-display" not in str(error.value)
+
+
+def test_stateless_cli_requests_can_run_in_parallel_with_a_bound(tmp_path):
+    import concurrent.futures
+    executable = tmp_path/'parallel-cli'
+    capture = tmp_path/'captures'
+    capture.mkdir()
+    executable.write_text(f'#!{sys.executable}\n' + '''
+import json, os, pathlib, sys, time
+args=sys.argv[1:]; prompt=sys.stdin.read(); start=time.monotonic()
+folder=pathlib.Path('''+repr(str(capture))+''')
+(folder/(str(os.getpid())+'.start')).write_text('started')
+deadline=time.monotonic()+3
+while len(list(folder.glob('*.start')))<2 and time.monotonic()<deadline:time.sleep(.02)
+time.sleep(.15)
+pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps({'content':'ok','tool_calls':[]}))
+(folder/(str(os.getpid())+'.json')).write_text(json.dumps({'start':start,'end':time.monotonic(),'cwd':str(pathlib.Path.cwd()),'prompt':prompt}))
+print(json.dumps({'type':'turn.completed'}))
+''')
+    executable.chmod(0o700)
+    model = CLIChatModel(provider='codex_cli',executable=str(executable),runtime_dir=str(tmp_path/'runtime'),max_concurrency=2,timeout=10)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        answers=list(executor.map(lambda i:model.invoke(f'private job {i}').content,range(4)))
+    assert answers == ['ok']*4
+    rows=[json.loads(p.read_text()) for p in capture.glob('*.json')]
+    assert len({r['cwd'] for r in rows}) == 4
+    intervals=sorted([(r['start'],1) for r in rows]+[(r['end'],-1) for r in rows])
+    count=peak=0
+    for _,change in intervals:
+        count += change
+        peak = max(peak, count)
+    assert peak == 2
+    assert all(not __import__('pathlib').Path(r['cwd']).exists() for r in rows)

@@ -21,7 +21,7 @@ def main():
                 "tradingagents/memory/")
     modules = {"tradingagents/backtest.py", "tradingagents/portfolio.py",
                "tradingagents/reporting.py", "tradingagents/report_html.py",
-               "tradingagents/default_config.py", "cli/main.py"}
+               "tradingagents/default_config.py", "cli/main.py", "cli/run.py", "cli/selections.py"}
     core = [p for p in paths if p.startswith(prefixes) or p in modules]
     changed = [p for p in core if not (root / p).exists()
                or (root / p).read_bytes() != git("show", f"{args.ref}:{p}")]
