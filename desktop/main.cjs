@@ -29,7 +29,7 @@ function bridge(action,payload={},long=false){
   child.on('close',code=>{
    const cancelled=long&&active?.cancelled;const action=long?active?.action:null;
    if(long)active=null;
-   if(cancelled){send('cancelled',{message:action==='subscription_login'?'Đã hủy phiên đăng nhập ChatGPT.':'Đã dừng. Có thể chạy lại cùng mã, ngày và cấu hình để tiếp tục từ checkpoint.'});resolve({cancelled:true});}
+   if(cancelled){send('cancelled',{message:action==='subscription_login'?'Đã hủy phiên đăng nhập ChatGPT.':action==='review_council'?'Đã dừng hội đồng. Mở báo cáo và chọn Tiếp tục hội đồng để chạy tiếp.':'Đã dừng. Có thể chạy lại cùng mã, ngày và cấu hình để tiếp tục từ checkpoint.'});resolve({cancelled:true});}
    else if(error||code!==0||result===undefined){const message=error?.message||'Tiến trình TradingAgents kết thúc trước khi trả kết quả.';if(long)send('failed',{message,type:error?.type||'ProcessError'});reject(new Error(message));}
    else {if(long)send('completed',result);resolve(result);}
   });
