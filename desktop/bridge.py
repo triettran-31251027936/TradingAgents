@@ -144,6 +144,7 @@ def inputs(payload):
         chosen = ['market', 'social', 'news', 'fundamentals']
     if not isinstance(chosen, list) or not set(chosen) <= {'market', 'social', 'news', 'fundamentals'}:
         raise ValueError('Lựa chọn analyst không hợp lệ.')
+    chosen = [key for key in ('market', 'social', 'news', 'fundamentals') if key in chosen]
     asset = payload.get('asset_type', 'stock')
     if asset not in ('stock', 'crypto'):
         raise ValueError('Loại tài sản không hợp lệ.')

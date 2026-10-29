@@ -476,3 +476,9 @@ def test_settlement_can_update_every_pending_ticker(desktop, monkeypatch):
 def test_empty_role_overrides_do_not_change_upstream_checkpoint_signature(desktop):
     result = bridge.save_config({'desktop_role_models': {}})
     assert 'desktop_role_models' not in result
+
+
+@pytest.mark.unit
+def test_analyst_selection_is_a_set_in_the_original_cli_order():
+    _, chosen, _, _ = bridge.inputs({'ticker': 'FPT.VN', 'analysts': ['news', 'market', 'news']})
+    assert chosen == ['market', 'news']
