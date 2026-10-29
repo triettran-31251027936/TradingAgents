@@ -61,6 +61,7 @@ $('preset-cli').onclick=()=>{const routes={};for(const [, , roles]of groups)for(
 $('preset-codex-deepseek').onclick=()=>presetRouting(false);$('preset-three').onclick=()=>presetRouting(true);$('preset-inherit').onclick=()=>{state.routingDraft={};renderRouting();notice('Đã chọn thừa kế hai tầng. Bấm Lưu phân công để áp dụng.','success');};
 for(const button of document.querySelectorAll('[data-settings-anchor]'))button.onclick=()=>{const main=document.querySelector('main');main.scrollTop=$(button.dataset.settingsAnchor).offsetTop-main.offsetTop-18;};
 window.tradingAgents.onEvent(event=>{const data=event.payload||{};switch(event.type){
+ case 'council_retry':eventLog('progress',(providerNames[data.provider]||data.provider)+' · '+data.message);break;
  case 'council_available':refreshHistory().catch(()=>{});eventLog('progress','Đã lưu báo cáo gốc. Hội đồng đang tiếp tục; có thể resume từ thư viện nếu gián đoạn.');break;
  case 'council_started':for(const role of Object.values(councilRoles))state.roleStates[role]='pending';renderWorkflow();eventLog('progress','Hội đồng đọc '+data.packets+' phần bằng chứng cho mỗi bên.');break;
  case 'council_loaded':eventLog('progress','Cả ba đã đọc đủ cùng bộ bằng chứng. Bắt đầu đánh giá độc lập và phản biện chéo.');break;

@@ -14,10 +14,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Literal
 
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 PROVIDERS = ('codex_cli', 'agy_cli', 'deepseek')
 LABELS = {'codex_cli': 'Codex', 'agy_cli': 'Antigravity', 'deepseek': 'DeepSeek'}
@@ -161,7 +163,7 @@ class Synthesis(BaseModel):
 
 
 class Check(BaseModel):
-    verdict: str = Field(description='approve or revise')
+    verdict: Literal['approve', 'revise']
     concerns: list[str] = Field(description='Specific remaining factual or reasoning issues; use [] if none.')
 
 
@@ -218,16 +220,31 @@ def run(evidence, config, cache_dir, emit, *, callbacks=(), factory=_model):
             return schema.model_validate(saved)
         emit('council_progress', {'provider': provider, 'stage': step, 'status': 'running'})
         model = factory(provider, cfg['models'][provider], callbacks)
-        result = model.with_structured_output(schema).invoke([
-            SystemMessage(content=SYSTEM + '\nYour identity: ' + LABELS[provider]),
-            HumanMessage(content=instruction)])
-        result = schema.model_validate(result)
+        bound = model.with_structured_output(schema)
+        limits = ('\nKeep reading notes below 1400 characters (hard maximum 2200). '
+                  'Keep review analysis below 3000 characters (hard maximum 4000). '
+                  'Keep synthesis below 14000 characters. Output the requested schema exactly.')
+        for attempt in range(2):
+            repair = '\nYour previous response failed schema validation. Shorten the response and obey every field and length limit.' if attempt else ''
+            try:
+                result = bound.invoke([
+                    SystemMessage(content=SYSTEM + '\nYour identity: ' + LABELS[provider] + limits + repair),
+                    HumanMessage(content=instruction)])
+                result = schema.model_validate(result)
+                break
+            except (ValidationError, OutputParserException):
+                if attempt:
+                    raise
+                emit('council_retry', {'provider': provider, 'stage': step,
+                                      'message': 'Phản hồi chưa đúng schema; đang yêu cầu chính model đó sửa định dạng một lần.'})
         if isinstance(result, Review) and any(type(n) is not int or not 1 <= n <= total for n in result.evidence_packets):
             raise ValueError('Hội đồng tham chiếu packet không tồn tại.')
         if isinstance(result, Check) and result.verdict not in ('approve', 'revise'):
             raise ValueError('Kết quả kiểm tra hội đồng không hợp lệ.')
         with lock:
             journal['steps'][key] = scrub(result.model_dump())
+            if attempt:
+                journal.setdefault('schema_repairs', {})[key] = attempt
             _atomic(journal_path, journal)
         emit('council_progress', {'provider': provider, 'stage': step, 'status': 'completed'})
         if isinstance(result, Review):

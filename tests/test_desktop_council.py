@@ -156,3 +156,54 @@ def test_evidence_and_journal_refuse_symlinks(tmp_path):
     with pytest.raises(ValueError):
         council._atomic(target, {'overwrite': True})
     assert outside.read_text() == '{}'
+
+
+def test_schema_repair_reasks_same_provider_once_without_dropping_evidence(tmp_path):
+    model_factory = Models()
+    calls = []
+    class InvalidOnce:
+        def with_structured_output(self, schema):
+            self.schema = schema
+            return self
+        def invoke(self, messages):
+            calls.append(messages)
+            if len(calls) == 1:
+                return {'notes': 'x' * 2300}
+            return {'notes': 'Valid evidence reading with units and dates.'}
+    broken = InvalidOnce()
+    def factory(provider, model, callbacks):
+        return broken if provider == 'deepseek' else model_factory(provider, model, callbacks)
+    events = []
+    # Only the first two Reading calls use this fake. Other schemas use the
+    # normal factory so the actual council still reaches its final checks.
+    original = broken.with_structured_output
+    def choose(schema):
+        if schema is council.Reading:
+            return original(schema)
+        return model_factory('deepseek', 'model', ()).with_structured_output(schema)
+    broken.with_structured_output = choose
+    result = council.run(evidence(), config(), tmp_path, lambda k,p: events.append((k,p)), factory=factory)
+    assert len(calls) == 2
+    assert calls[0][-1].content == calls[1][-1].content
+    assert 'previous response failed' in calls[1][0].content
+    assert any(k == 'council_retry' for k,p in events)
+    journal = json.loads((tmp_path/'council'/result['id']/'progress.json').read_text())
+    assert journal['schema_repairs']['evidence_1:deepseek'] == 1
+
+
+def test_schema_repair_is_bounded_and_does_not_accept_invalid_reading(tmp_path):
+    normal, attempts = Models(), []
+    class Invalid:
+        def with_structured_output(self, schema):
+            return self
+        def invoke(self, messages):
+            attempts.append(messages)
+            return {'notes': 'x' * 2300}
+    def factory(provider, model, callbacks):
+        return Invalid() if provider == 'deepseek' else normal(provider, model, callbacks)
+    with pytest.raises(RuntimeError, match='ValidationError'):
+        council.run(evidence(), config(), tmp_path, lambda *a: None, factory=factory)
+    assert len(attempts) == 2
+    journal = json.loads(next((tmp_path/'council').glob('*/progress.json')).read_text())
+    assert 'evidence_1:deepseek' not in journal['steps']
+    assert set(journal['steps']) == {'evidence_1:codex_cli', 'evidence_1:agy_cli'}
