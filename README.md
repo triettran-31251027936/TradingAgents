@@ -1,3 +1,9 @@
+> This fork includes a dedicated **Trading Agents desktop app** with clickable
+> role reports, backtest, memory, Codex/Antigravity CLI adapters, original ChatGPT
+> Subscription and per-role DeepSeek/model configuration. See
+> [desktop setup](desktop/README.md) and [integration/verification](AGENTSROOM.md).
+> Original TradingAgents workflow modules are preserved.
+
 <p align="center">
   <img src="tradingagents/assets/tauric-logo.svg" width="60%" alt="Tauric Research">
 </p>

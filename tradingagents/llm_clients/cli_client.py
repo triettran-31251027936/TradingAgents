@@ -180,7 +180,7 @@ class CLIChatModel(BaseChatModel):
             ) as process:
                 try:
                     request = prompt if self.provider == "codex_cli" else None
-                    stdout, _ = process.communicate(request, timeout=self.timeout)
+                    stdout, stderr = process.communicate(request, timeout=self.timeout)
                 except subprocess.TimeoutExpired:
                     if os.name == "posix":
                         os.killpg(process.pid, signal.SIGKILL)
@@ -189,10 +189,15 @@ class CLIChatModel(BaseChatModel):
                     process.communicate()
                     raise TimeoutError(f"{self.provider} exceeded {self.timeout}s") from None
                 if process.returncode:
-                    raise RuntimeError(
-                        f"{self.provider} exited with code {process.returncode}; "
-                        "check CLI sign-in, model access and quota in its own terminal."
-                    )
+                    # Classify known failures without echoing a provider's raw
+                    # diagnostic: it may contain credentials or private content.
+                    details = (stdout + "\n" + stderr).lower()
+                    reason = "check CLI sign-in, model access and quota in its own terminal."
+                    if any(word in details for word in ("usage limit", "rate limit", "quota", "resource_exhausted")):
+                        reason = "CLI usage limit reached; wait for its reset or review the plan limits. Checkpoint is retained."
+                    elif any(word in details for word in ("not authenticated", "unauthorized", "login required", "sign in again")):
+                        reason = "CLI sign-in required; sign in using the CLI before resuming. Checkpoint is retained."
+                    raise RuntimeError(f"{self.provider} exited with code {process.returncode}; {reason}")
             events = [json.loads(line) for line in stdout.splitlines() if line.strip()]
             for event in events:
                 if self.provider == "codex_cli":

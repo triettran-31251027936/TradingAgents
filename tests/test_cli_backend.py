@@ -23,6 +23,8 @@ if prompt is None:
     prompt = sys.stdin.read()
 pathlib.Path(os.environ["TEST_CAPTURE"]).write_text(prompt)
 time.sleep(float(os.environ.get("TEST_DELAY", "0")))
+if os.environ.get("TEST_ERROR_MESSAGE"):
+    print(os.environ["TEST_ERROR_MESSAGE"], file=sys.stderr)
 sys.exit(int(os.environ["TEST_EXIT"])) if os.environ.get("TEST_EXIT") else None
 answer = json.loads(os.environ.get("TEST_ANSWER", '{"content":"report","tool_calls":[]}'))
 if "exec" in args:
@@ -149,3 +151,15 @@ def test_factory_and_split_tiers_use_cli_without_api_keys(cli_model, monkeypatch
               "deep_think_provider": "agy_cli", "deep_think_llm": "default"}
     assert create_tier_client(config, "quick").get_llm().provider == "codex_cli"
     assert create_tier_client(config, "deep").get_llm().provider == "agy_cli"
+
+
+@pytest.mark.parametrize(("message", "expected"), [
+    ("You have hit your usage limit. private-key-do-not-display", "usage limit reached"),
+    ("Unauthorized: private-key-do-not-display", "sign-in required"),
+])
+def test_known_cli_errors_are_actionable_without_echoing_provider_secrets(cli_model, monkeypatch, message, expected):
+    monkeypatch.setenv("TEST_EXIT", "1")
+    monkeypatch.setenv("TEST_ERROR_MESSAGE", message)
+    with pytest.raises(RuntimeError, match=expected) as error:
+        cli_model.invoke("Analyze")
+    assert "private-key-do-not-display" not in str(error.value)

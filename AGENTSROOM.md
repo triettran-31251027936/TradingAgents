@@ -1,165 +1,78 @@
-# TradingAgents in AgentsRoom — Codex and agy CLI backends
+# Trading Agents desktop and CLI integration
 
-This fork keeps the upstream LangGraph workflow. `codex_cli` and `agy_cli`
-replace only the LLM transport. Four analysts, bull/bear research, the research
-manager, trader, three risk perspectives, portfolio manager, reports, memory,
-reflection, checkpoints and decision backtests remain upstream components.
+The dedicated local application is **Trading Agents.app**. Its source is in
+[`desktop/`](desktop/README.md). It contains only TradingAgents research,
+clickable role reports, backtest, memory/reflection, portfolio context, model and
+data settings, checkpoints and authentication. Project/folder/computer browsing,
+generic assistants and unrelated AgentsRoom services are not included.
 
-Verification on 2026-10-28: **Codex CLI 0.164.0 passed a real tool-request →
-tool-result → structured-output smoke test. agy CLI 1.4.7 is experimental:**
-a direct minimal schema prompt succeeded, but the adapter's tool request timed
-out at 60 seconds. Use `codex_cli` as the verified starting backend. A higher
-timeout is configurable but has not been established as the fix for agy.
+The original `/Applications/AgentsRoom.app` is read-only input to the local
+builder as an Electron runtime. The new application has its own main process,
+renderer, preload, executable/helper names, bundle ID, icon and native menu.
+It is a dedicated desktop implementation in this TradingAgents fork, not a
+claim that proprietary AgentsRoom TypeScript sources were published.
 
-AgentsRoom is the outer terminal/agent workspace. Adding this project does not
-turn each graph node into a separate native AgentsRoom agent tile. That would
-require a different UI integration, not just an LLM provider adapter.
+## Models and accounts
 
-## Setup
+- Codex CLI (`codex_cli`) uses its own existing sign-in.
+- Antigravity (`agy_cli`) uses the `agy` terminal command and its own sign-in.
+  It remains experimental on the inspected local version.
+- DeepSeek uses the original `deepseek` provider. Enter the key in Settings;
+  it is stored only in the private `.env` file with mode 0600, never returned
+  to the renderer or included in Git, reports or model-routing configuration.
+- Subscription (`chatgpt`) uses the original TradingAgents Plus/Pro OAuth flow,
+  including loopback, pasted callback, available models and revocation. It is
+  a separate option from the two CLI adapters and uses the plan's limits.
 
-Requires Python 3.11+, and at least one signed-in CLI (`codex` or `agy`).
+Keep the original quick/deep configuration, or assign provider/model per role.
+The role router selects from actual LangGraph metadata rather than guessing
+from prompts. It rebuilds the same original GraphSetup with different LLM
+transports; analyst/tool graphs, debates, memory and managers remain original.
+Backtest uses the same routing through a scoped graph factory in its dedicated
+job process. Changing model assignments changes the checkpoint signature;
+empty assignments preserve the original signature.
 
-```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -e .
-cp config/agentsroom.env.example config/agentsroom.env
-```
+Settings offers Codex+Antigravity, Codex+DeepSeek and three-provider presets.
+A preset is applied only after saving the assignment. DeepSeek needs the user's
+key; CLI providers need their own valid sign-in and available usage quota.
+All upstream config keys remain available in advanced JSON. Storage paths are
+managed by the desktop. Optional save, HTML and show flags match the CLI.
 
-Sign in using the CLI's own terminal interface. The adapter never reads or
-copies its token files. Existing subscription limits still apply. Set the
-provider to `codex_cli` or `agy_cli` in `config/agentsroom.env`. Model `default`
-omits `--model`; an explicit model ID is forwarded unchanged. Codex starts
-with `--ignore-user-config`, so `default` means the CLI built-in default, not a
-custom profile from your config file. Set both model IDs if you need pinning.
+## Running the original CLI inside AgentsRoom
 
-## Open in AgentsRoom
-
-1. Add this repository folder as a project.
-2. Add a Codex or Antigravity agent for operating the project, or use its terminal.
-3. Run `./scripts/agentsroom.command --help` to verify the launcher.
-4. Start the upstream analysis interactively with `./scripts/agentsroom.command`.
-
-Run `./scripts/agentsroom.command --doctor` first to verify executable discovery
-and construct the real graph offline. It lists all roles and configuration
-choices without making model calls, fetching market data or saving a decision.
-This is an installation check, not a test of account access or financial data.
-
-Example for a **US connectivity check**, not a Vietnam stock mapping:
+The earlier terminal integration remains available:
 
 ```sh
-./scripts/agentsroom.command --ticker AAPL --date 2026-10-27 \
-  --analysts market,sentiment,news,fundamentals --save --no-show --html
+./scripts/agentsroom.command --doctor
+./scripts/agentsroom.command --help
 ```
 
-Pass the analysis date you actually want; this example is deliberately fixed.
-To include your holdings, add `--portfolio path/to/portfolio.json` using the
-upstream cash/currency/positions JSON schema. Do not put account credentials in
-that file. Backtest uses the same native subcommand and backend settings:
-
-```sh
-./scripts/agentsroom.command backtest AAPL --start 2026-09-01 --end 2026-09-15 \
-  --every 7 --analysts market,sentiment,news,fundamentals
-```
-
-Reports and state logs are under `outputs/`; private runtime memory and caches
-under `work/runtime/`. Each model call logs its start and completion to the
-terminal. The upstream CLI also shows graph progress. Backtest evaluates
-independent decisions; it does not simulate a changing cash/position ledger.
-
-Suggested initial prompt for an AgentsRoom operator:
-
-> Use scripts/agentsroom.command to operate the original TradingAgents graph.
-> Keep all four stock analysts and both debates enabled. Report missing data
-> and errors. Do not substitute your own one-shot analysis for a failed graph
-> run. Read AGENTSROOM.md before running. Do not place brokerage orders.
-
-## Transport contract
-
-- Every turn includes the complete role-labelled history; sessions are not
-  shared across analysts or runs.
-- Tool schemas are supplied to the CLI as data. The answer is a JSON envelope
-  with `content` and requested `tool_calls`. LangGraph's original ToolNode
-  executes the tools and feeds the real results into the next turn.
-- Structured decision agents use their original Pydantic schemas.
-- One call per CLI provider runs at a time, including across quick/deep tiers
-  in the same Python process. Separate OS processes do not share this lock.
-- Fresh request directories, no shell interpolation, no
-  automatic permission bypass, timeouts terminate the process group on POSIX.
-- Codex receives prompts through stdin. The verified agy 1.4.7 stdin streaming
-  path hangs locally, so agy receives `--print=<prompt>` as a subprocess argument.
-  That argument can appear in local process listings. Requests above 120 KB
-  are refused without truncation; use Codex for longer histories. Do not use
-  the agy backend for sensitive portfolio data on a shared machine.
-- Codex uses a read-only sandbox without the user's MCP/provider config. agy
-  uses its sandbox and plan mode. Both are instructed not to use native tools.
-  The schema-completion `finish` event in agy is accepted. The response is
-  rejected if event logs show other native tool usage; this check is
-  detection after the event, not a guarantee of tool unavailability in agy.
-- CLI failures, missing completion and malformed tool output raise errors.
-  Upstream structured-output fallback may retry as free text and logs that fact.
-- No streaming token adapter, automatic model switching, or quota retry is
-  implemented. CLI `--json-schema` capabilities/version must match the local
-  installations; CLI upgrades may need transport changes.
-
-## Vietnam stocks: separate data work still required
-
-This fork does not add a Vietnam market data vendor. Before using FPT, VCB,
-HPG or other local tickers, integrate and validate price/volume, financials,
-news, sentiment and a suitable benchmark. Do not map a Vietnam ticker to an
-unrelated US listing to make a run succeed. Historical fundamentals must use
-publication dates. Missing or unavailable data must remain explicit.
+The wrapper loads `config/agentsroom.env`, `.env`, then the example profile;
+explicit environment values take precedence. The original CLI's analysis,
+backtest and subscription login/logout commands are preserved. No API keys
+are required for the CLI LLM adapters, but data vendors may have their own keys.
 
 ## Verification
 
 ```sh
-.venv/bin/python -m pytest tests/test_cli_backend.py tests/test_graph_end_to_end.py -q
+.venv/bin/python scripts/audit_upstream_core.py
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check desktop tests/test_desktop*
 ```
 
-Adapter transport tests use scripted subprocesses. The full-graph adapter test
-uses scripted model/vendor responses and checks every original role, tools,
-memory and HTML output. These checks prove wiring, not financial performance.
-Real CLI smoke results and remaining limitations are recorded separately in
-the delivery report.
+The source audit checks 70 original workflow, data, memory, backtest, portfolio,
+report, config and CLI files against pinned upstream commit
+`c4544913a14ed3df5f1ed7b9e8483270ce20682a`; they are unchanged.
+Tests cover a full original graph with every role assigned a distinct model
+across three providers, tools/structured output, graph shape, persistence,
+resume, OAuth, private keys and error handling using controlled model/data IO.
+Those tests do not represent live DeepSeek or agy validation.
 
-## Sources
-
-- https://learn.chatgpt.com/docs/non-interactive-mode
-- https://antigravity.google/docs/cli/headless/
-- https://agentsroom.dev/guides/getting-started
-
-## Local desktop verification (2026-10-29)
-
-The local customized desktop app is installed as **Tranding Agent.app** with a
-separate candle-chart icon. The original AgentsRoom app is unchanged. This is
-an inspected-binary patch for AgentsRoom 1.229.0, not an upstream AgentsRoom
-source fork. App restarts, opening TradingAgents VN and running the graph doctor
-in its terminal were checked through native computer use. Automatic upstream
-update download/install is disabled in this customized copy.
-
-Run `python scripts/audit_upstream_core.py` to compare the original agents,
-graph, dataflows, memory, backtest, portfolio, reports, configuration and CLI
-entry point against the local `upstream/main` ref. The current snapshot checks
-70 files with no differences. This verifies source preservation only; it does
-not verify data coverage, live model support or investment accuracy.
-
-The complete offline test suite passes (1,432 tests, 104 subtests). CLI adapter
-coverage includes all roles and tool boundaries with scripted model responses.
-That test is distinct from a full real-LLM run. `agy_cli` remains experimental.
-Vietnam coverage is incomplete with the upstream vendor defaults: FPT.VN news
-is unavailable from Yahoo and StockTwits returns 404; FRED also needs its own
-key. Having all graph nodes does not supply missing Vietnam data. A native
-AgentsRoom tile for each TradingAgents node is not implemented; the original
-Python graph is the orchestrator running in an AgentsRoom terminal.
-
-A full real-Codex, real-vendor FPT.VN run completed on 2026-10-29 in 610.5
-seconds: four analyst reports, bull/bear debate, research manager, trader,
-three risk histories and final portfolio decision were present. The original
-writer exported Markdown/HTML and the run wrote memory and SQLite checkpoints.
-This demonstrates one completed workflow; vendor coverage and investment
-accuracy remain unverified. Yahoo ticker news, StockTwits, FRED configuration
-and Polymarket connectivity were incomplete during this run.
-
-The final local app also renames CFBundleName and all Electron helper bundles
-and executables consistently. The native menu and splash show Tranding Agent;
-the app retains its existing userData path before changing Electron app.name.
-The main executable and service identifiers retain their internal names.
+A full real-Codex, real-vendor FPT.VN run completed on 2026-10-29 in 610.5s.
+A subsequent run started from the dedicated UI completed its four analysts,
+Memory and Bull Researcher before the CLI exited with code 1; the checkpoint
+was retained. Browser OAuth creation/cancel was checked, but no account sign-in
+was completed by the agent. No live DeepSeek call is claimed without a key.
+Default data coverage for Vietnam remains incomplete (ticker news, StockTwits,
+FRED key and Polymarket connectivity). Source completeness does not establish
+investment accuracy or complete Vietnam data coverage.
