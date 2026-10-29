@@ -150,3 +150,16 @@ is unavailable from Yahoo and StockTwits returns 404; FRED also needs its own
 key. Having all graph nodes does not supply missing Vietnam data. A native
 AgentsRoom tile for each TradingAgents node is not implemented; the original
 Python graph is the orchestrator running in an AgentsRoom terminal.
+
+A full real-Codex, real-vendor FPT.VN run completed on 2026-10-29 in 610.5
+seconds: four analyst reports, bull/bear debate, research manager, trader,
+three risk histories and final portfolio decision were present. The original
+writer exported Markdown/HTML and the run wrote memory and SQLite checkpoints.
+This demonstrates one completed workflow; vendor coverage and investment
+accuracy remain unverified. Yahoo ticker news, StockTwits, FRED configuration
+and Polymarket connectivity were incomplete during this run.
+
+The final local app also renames CFBundleName and all Electron helper bundles
+and executables consistently. The native menu and splash show Tranding Agent;
+the app retains its existing userData path before changing Electron app.name.
+The main executable and service identifiers retain their internal names.
