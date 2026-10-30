@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 2
+VERSION = 3
 LOCK = threading.Lock()
 
 
@@ -398,6 +398,9 @@ def compute(rows, book, benchmark=None):
         "Vietcap income statement",
         metrics["revenue"]["asof"],
     )
+    from desktop.financial_metrics import extend
+
+    extend(book, add, field)
     return _safe(metrics), missing
 
 
@@ -512,6 +515,19 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
                 fetch(name, f"{FINANCE}/{ticker}/financial-statement?section={section}")
         book = statements(raw, metadata, asof)
         metrics, missing = compute(prices, book, benchmark)
+        from desktop.financial_metrics import reconcile
+
+        reconciliation = {
+            kind: {
+                key: reconcile(book[kind], key)
+                for key in book[kind]["fields"]
+                if any(
+                    term in book[kind]["fields"][key].lower()
+                    for term in ("net sales", "operating activities", "purchases of fixed")
+                )
+            }
+            for kind in ("income", "cash")
+        }
         universe_path = folder / "symbols.json"
         universe = (
             json.loads(universe_path.read_text())
@@ -542,6 +558,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             "benchmark": benchmark,
             "statements": book,
             "metrics": metrics,
+            "financial_reconciliation": reconciliation,
             "missing": missing,
             "warnings": warnings,
             "news": news,
@@ -550,7 +567,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
                 "Prices as returned by source; historical corporate-action adjustments may apply.",
                 "Published-date filtering is date-level. Restated accounts are not a point-in-time archive.",
                 "Statement values are raw VND except per-share/ratio/share-count fields. No conversion from billions.",
-                "Cashflow quarter-vs-YTD must be reconciled before adding periods; raw CFO is not automatically TTM FCF.",
+                "TTM flows require contiguous quarters and empirical quarter/FY reconciliation within0.5%; methodology can change. See financial_reconciliation. Raw CFO is not automatically TTM FCF.",
             ],
         }
         bundle = _safe(bundle)

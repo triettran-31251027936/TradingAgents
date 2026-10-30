@@ -324,9 +324,7 @@ def test_backtest_uses_separate_dated_bundle_and_restores_factory(tmp_path, monk
 
 
 def test_cross_ticker_reflection_does_not_receive_current_ticker_quant(tmp_path):
-    runtime = Runtime(
-        {"data_cache_dir": str(tmp_path)}, quant={"ticker": "FPT.VN"}, book={"cash": 100}
-    )
+    runtime = Runtime({"data_cache_dir": str(tmp_path)}, quant={"ticker": "FPT.VN"}, book=None)
     prompt = runtime.prompt("Reflect on another ticker only", "Memory Log")
     assert "FPT" not in str(prompt)
     assert "CANONICAL QUANTITATIVE" not in str(prompt)
@@ -429,3 +427,63 @@ def test_saved_export_includes_evidence_and_no_execution_from_prose(tmp_path):
 @pytest.mark.parametrize("published", ["", "invalid", "2026-00-01", "2026-11-01", None])
 def test_financials_without_valid_past_publication_are_withheld(published):
     assert not vietnam._published({"publicDate": published}, "2026-10-30")
+
+
+def test_each_downstream_role_receives_same_snapshot_and_explicit_missing(tmp_path):
+    from langchain_core.messages import HumanMessage
+
+    quant = {
+        "ticker": "FPT.VN",
+        "company_name": "FPT",
+        "exchange": "HOSE",
+        "analysis_date": "2026-10-30",
+        "currency": "VND",
+        "provider": "Test source",
+        "metrics": {"close": {"value": 52700}, "pe_ttm": {"value": None}},
+        "missing": ["pe_ttm"],
+        "warnings": [],
+        "basis": [],
+        "fingerprint": "shared-quant-test",
+    }
+
+    class Backend:
+        def invoke(self, *args, **kwargs):
+            return AIMessage(content="Evidence-based report")
+
+    runtime = Runtime({"data_cache_dir": str(tmp_path)}, quant=quant)
+    for role in [
+        "Bull Researcher",
+        "Bear Researcher",
+        "Research Manager",
+        "Trader",
+        "Aggressive Analyst",
+        "Conservative Analyst",
+        "Neutral Analyst",
+    ]:
+        runtime.invoke(
+            role,
+            {"provider": "test", "model": "test"},
+            Backend(),
+            runtime.prompt([HumanMessage(content="Original role instructions")], role),
+            {},
+        )
+    assert len(runtime.handoffs) == 7
+    assert {r["snapshot_fingerprint"] for r in runtime.handoffs.values()} == {"shared-quant-test"}
+    assert all(r["missing_metrics"] == ["pe_ttm"] for r in runtime.handoffs.values())
+
+
+def test_missing_capsule_blocks_false_completion(tmp_path):
+    class Backend:
+        def invoke(self, *args, **kwargs):
+            return AIMessage(content="A polished but ungrounded reply")
+
+    quant = {
+        "ticker": "FPT.VN",
+        "analysis_date": "2026-10-30",
+        "metrics": {"close": {"value": 52700}},
+        "fingerprint": "required-context",
+    }
+    runtime = Runtime({"data_cache_dir": str(tmp_path)}, quant=quant)
+    with pytest.raises(ValueError, match="handoff"):
+        runtime.invoke("Trader", {}, Backend(), [], {})
+    assert "Trader" not in runtime.handoffs

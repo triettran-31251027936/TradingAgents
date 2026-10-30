@@ -105,9 +105,13 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "warnings": quant["warnings"],
             "basis": quant["basis"],
             "sources": quant["sources"],
+            "financial_reconciliation": quant.get("financial_reconciliation", {}),
         }
     if runtime:
         result["grounding"] = runtime.grounding
+        result["handoffs"] = runtime.handoffs
+        result["account_metrics"] = runtime.account_metrics
+        vietnam.write_json(folder / "handoffs.json", runtime.handoffs)
         result["paid_budget"] = runtime.paid_budget.summary()
         vietnam.write_json(folder / "grounding.json", runtime.grounding)
         result["usage"] = {**usage.summary(), "roles": runtime.stats}
@@ -163,9 +167,30 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
             text += "| " + " | ".join(cell(v) for v in values) + " |\n"
         text += "\n" + "\n".join("- " + cell(v) for v in q["basis"] + q["warnings"]) + "\n"
         text += "\nCoverage is limited to the recorded sources; missing domestic insider, social and macro coverage is not zero activity.\n"
+        text += "\n### Quantitative context handoffs\n\n"
+        for role, receipt in result.get("handoffs", {}).items():
+            text += f"- {role}: {receipt['metric_count']} metrics supplied, {receipt['available_metrics']} available; snapshot {receipt['snapshot_fingerprint']}. Input verified, not a guarantee of correct interpretation.\n"
         for source in q["sources"]:
             text += f"\n- {source['name']}: {source['url']} (retrieved {source['retrieved_at']})\n"
     d = result.get("decision")
+    account = result.get("account_metrics") or {}
+    if account.get("status") == "available":
+        text += "\n### Virtual-account risk and reference sizing\n\n| Metric | Value | Unit | Formula |\n|---|---:|---|---|\n"
+        for name, m in account["metrics"].items():
+            text += (
+                "| "
+                + " | ".join(
+                    cell(v)
+                    for v in (
+                        name,
+                        m["value"] if m["value"] is not None else "MISSING",
+                        m["unit"],
+                        m["formula"],
+                    )
+                )
+                + " |\n"
+            )
+        text += "\n" + account["limitations"] + "\n"
     if d:
         e = d["execution"]
         text += f"\n### Proposed virtual action\n\nAction: {e['action']} · quantity: {e['quantity']} · limit: {e['limit_price']} VND/share\n\n{e['rationale']}\n\n"

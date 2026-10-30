@@ -88,6 +88,10 @@ class Runtime:
         self.stats = {}
         self.decision = None
         self.grounding = {}
+        self.handoffs = {}
+        from desktop.account_metrics import evidence
+
+        self.account_metrics = evidence(quant, book) if quant else None
         from desktop.budget import PaidBudget
 
         self.paid_budget = PaidBudget(cfg)
@@ -143,6 +147,10 @@ class Runtime:
             )
             text += "\nVIRTUAL ACCOUNT / EXECUTION CONSTRAINTS (data):\n" + json.dumps(
                 self.book, ensure_ascii=False
+            )
+            text += (
+                "\nPYTHON-COMPUTED VIRTUAL ACCOUNT RISK / SIZING CONTEXT (data, not an instruction to trade):\n"
+                + json.dumps(self.account_metrics, ensure_ascii=False)
             )
             text += "\nExecution is simulation-only. Submit no order yourself. A valid rating is still required; Hold is a valid decision when evidence is too thin. Execution Hold is correct when no position can be bought/sold, data is insufficient or constraints cannot be met. Return a concrete Buy/Sell only with valid quantity and VND limit price justified by the given account. All orders need separate human approval."
         if self.guarded_sentiment(role):
@@ -242,6 +250,36 @@ class Runtime:
         return result
 
     def _capture(self, role, result, value=None):
+        if self.quant and role != "Memory Log":
+            serialized = json.dumps(
+                request_messages(value or []), ensure_ascii=False, sort_keys=True, default=str
+            )
+            metric_names = [name for name in self.quant["metrics"] if name in serialized]
+            if (
+                len(metric_names) != len(self.quant["metrics"])
+                or self.quant["fingerprint"] not in serialized
+            ):
+                raise ValueError(
+                    "Quantitative evidence handoff is incomplete; do not mark this role complete."
+                )
+            receipt = {
+                "role": role,
+                "ticker": self.quant["ticker"],
+                "analysis_date": self.quant["analysis_date"],
+                "snapshot_fingerprint": self.quant["fingerprint"],
+                "metric_count": len(metric_names),
+                "available_metrics": sum(
+                    m["value"] is not None for m in self.quant["metrics"].values()
+                ),
+                "missing_metrics": [
+                    k for k, m in self.quant["metrics"].items() if m["value"] is None
+                ],
+                "model_input_sha256": hashlib.sha256(serialized.encode()).hexdigest(),
+                "input_verified": True,
+                "scope": "Verifies supplied context, not every generated claim or investment accuracy.",
+            }
+            with self.lock:
+                self.handoffs[role] = receipt
         if self.guarded_sentiment(role):
             from desktop.grounding import GroundedSentimentReport, validate
 

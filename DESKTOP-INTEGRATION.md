@@ -175,3 +175,29 @@ Earlier real-run measurements in this document used the prior model allocation.
 They validate the integration, not the new 11-role Codex allocation. The latest
 budget policy is checked with isolated backend doubles, without spending API
 credit. config/desktop.example.json contains a sanitized reproducible profile.
+
+## Reconciled financial and account metrics
+
+The canonical adapter version3 adds flow reconciliation before TTM arithmetic.
+Complete four-quarter totals are checked against up to two recent published FY
+statements with a 0.5% tolerance. Discrete flows are summed; YTD flows are first
+differenced. Ambiguous, inconsistent, stale or incomplete evidence yields
+missing TTM, not a guessed number. This is an empirical representation check,
+not an audit of statements or protection against all accounting restatements.
+FCF requires aligned periods and signed non-positive asset-purchase cashflow;
+the provider definition can include other long-term assets. Quarterly EPS is
+labelled as a reported-period value and is never summed to invent EPS TTM.
+PE/PB/ROE remain explicitly missing pending the required consistent inputs.
+
+A fresh public FPT dataset validated 50 available metrics of 53 defined, with
+PE/PB/ROE withheld. No LLM or paid API call was needed for that source test.
+The original 39-metric reports remain historical records and are not rewritten
+as if they had these new inputs.
+
+Virtual-account evidence includes current exposure/weight, a single-stock
+historical VaR/CVaR amount and whole-lot capacity at the reference close after
+fees and reserved exposure. These are deterministic reference calculations,
+not a trade recommendation, portfolio VaR or a forecast. Runtime sidecars
+record each role's supplied snapshot, metric coverage and input hash. A role
+with a missing canonical capsule cannot be marked complete. The receipt proves
+input delivery, not the correctness of every output assertion.
