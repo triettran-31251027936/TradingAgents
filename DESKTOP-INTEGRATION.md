@@ -522,3 +522,28 @@ and a Polymarket request failed. These remain unavailable, not fabricated.
 
 This one successful run does not certify every VN sector, historical vintage,
 reflection/backtest, native approval interaction or investment correctness.
+
+## NHNN briefing credit/deposit facts
+
+VN snapshot v12 adds four deterministic macro tools and canonical metrics from
+dated NHNN briefings published by Deposit Insurance of Vietnam (DIV):
+`vn_credit_stock` in VND, `vn_credit_ytd` and `vn_credit_yoy` as fractions with
+distinct comparison bases, and `vn_new_deposit_rate` as an annualized fraction.
+The last is the average of new deposit transactions, not an SBV policy rate,
+an individual bank's quoted rate, or an interbank overnight rate.
+
+The live 2026-10-30 data fetch extracted the 2026-09-30 credit stock and growth
+and the 2026-09-20 new-deposit rate from a DIV article published 2026-10-08.
+Raw HTML is archived by content hash. Snapshot v12 was built through the actual
+VN loader: 95/121 values available, 17 bank-inapplicable definitions, 9 missing.
+All 12 model-facing runtime prompts contain the four metrics and the same
+canonical fingerprint; all four macro tool aliases return matching values.
+This is transport/context evidence, not a second full LLM acceptance run.
+
+Discovery is bounded to NHNN briefing links on the DIV homepage plus a curated
+seed. This does not certify exhaustive/latest-release discovery. The adapter
+withholds changed prose, future observations, conflicting same-period values,
+and observations older than 62 days. Historical runs use only snapshots actually
+observed by their analysis date; downloading a dated old article today cannot
+silently create a historical vintage. No numeric policy rates are inferred from
+a statement that rates were unchanged. The former NSDP GDP/valuation gaps remain.

@@ -451,12 +451,25 @@ def change(source, offset, freq, title):
 
 
 def summary(bundle):
-    return {k: v for k, v in bundle.items() if k not in ("series", "raw_series")} | {
+    result = {k: v for k, v in bundle.items() if k not in ("series", "raw_series")} | {
         "series": {
             alias: {k: v for k, v in entry.items() if k != "observations"}
             for alias, entry in bundle.get("series", {}).items()
         }
     }
+    if "monetary_releases" in result:
+        # Canonical metrics already carry each fact. Avoid repeating all four
+        # metrics inside every source record in CLI context.
+        monetary = result["monetary_releases"]
+        result["monetary_releases"] = {
+            k: v for k, v in monetary.items() if k not in ("metrics", "releases")
+        } | {
+            "releases": [
+                {k: v for k, v in r.items() if k != "metrics"}
+                for r in monetary.get("releases", [])
+            ]
+        }
+    return result
 
 
 def tool(bundle, indicator, asof, look_back_days=None):
@@ -466,6 +479,10 @@ def tool(bundle, indicator, asof, look_back_days=None):
     if type(days) is not int or not 1 <= days <= 36500:
         raise ValueError("Invalid macro lookback")
     start = (date.fromisoformat(asof) - timedelta(days=days)).isoformat()
+    if indicator in ("vn_credit_stock", "vn_credit_ytd", "vn_credit_yoy", "vn_new_deposit_rate"):
+        from desktop.monetary_vietnam import tool as monetary_tool
+
+        return monetary_tool(bundle.get("monetary_releases", {}), indicator)
     if indicator.startswith("vn_fx_") or indicator.startswith("vn_fx:"):
         from desktop.fx_vietnam import tool as fx_tool
 

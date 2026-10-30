@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 11
+VERSION = 12
 LOCK = threading.Lock()
 
 
@@ -617,6 +617,16 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             domestic_macro["official_releases"] = releases
             metrics.update(releases["metrics"])
             domestic_macro["warnings"].extend(releases["warnings"])
+            from desktop import monetary_vietnam
+
+            monetary = monetary_vietnam.load(asof, cache_dir)
+            domestic_macro["monetary_releases"] = monetary
+            metrics.update(monetary["metrics"])
+            domestic_macro["warnings"].extend(monetary["warnings"])
+            sources.extend(
+                {"name": "DIV published NHNN briefing", **source}
+                for source in monetary["sources"]
+            )
             from desktop import fx_vietnam
 
             try:
