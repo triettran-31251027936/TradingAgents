@@ -482,3 +482,18 @@ portfolios/backtests do not inherit an earlier virtual-account identity. This do
 not change the approval fingerprint, HMAC, native dialog or execution rules.
 Tests exercise actual SQLite crash/recovery with deterministic stand-in nodes;
 they verify lifecycle/context isolation, not real LLM reasoning or all graph nodes.
+
+
+### Production-graph desktop orchestration check
+The end-to-end tests now assemble the original GraphSetup via desktop role
+routing and Vietnamese vendor scope. They execute all 13 original graph nodes,
+including the actual Memory step, all analyst tools without error ToolMessages,
+bull/bear and all three risk debates, then the typed executable PM decision.
+Both cases keep a Buy rating: execution Buy creates only PROPOSED in an isolated
+3M practice SQLite account with approved_at null; execution Hold creates no order.
+This proves rating alone does not execute. Twelve model-facing roles receive the
+same quantitative fingerprint; the Antigravity source readback is validated.
+The configuration preserves 6 Codex / 6 DeepSeek / 1 Antigravity. Models and market
+inputs are deterministic fixtures; no CLI process, paid inference, real data quality,
+semantic reasoning or native human approval is certified by this test. Full source
+provider/CLI/live-model acceptance remains a separate completion requirement.

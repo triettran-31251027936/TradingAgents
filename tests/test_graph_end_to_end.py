@@ -428,3 +428,177 @@ def test_the_memory_step_reads_lessons_as_of_the_trade_date_and_settles_once(tmp
 
     assert asked == ["2026-01-20", "2026-01-20"]
     assert (tmp_path / "log.md").read_text() == log_after_first
+
+
+@pytest.mark.parametrize("execution_action", ["Buy", "Hold"])
+def test_desktop_vietnam_full_graph_reaches_typed_pending_proposal(
+    tmp_path, monkeypatch, offline, execution_action
+):
+    """Original production nodes + desktop routing/tools; scripted inference only."""
+    from datetime import datetime
+
+    import tradingagents.llm_clients as clients
+    from desktop import integration, vietnam
+    from desktop.grounding import GroundedSentimentReport, ledger
+    from desktop.profiles import balanced_routes
+    from desktop.runtime_models import ExecutablePortfolioDecision, TokenUsage, messages
+
+    target = datetime.now(vietnam.TZ).date().isoformat()
+    for key in ("symbol", "ticker"):
+        monkeypatch.setitem(ARGS, key, "VCB.VN")
+    for key in ("curr_date", "end_date"):
+        monkeypatch.setitem(ARGS, key, target)
+    monkeypatch.setitem(ARGS, "start_date", "2025-01-01")
+    dates = pd.bdate_range(end=target, periods=60)
+    book = {k: {"fields": {}, "quarters": [], "years": []} for k in ("income", "balance", "cash")}
+    quant = {
+        "ticker": "VCB.VN",
+        "company_name": "VCB offline fixture",
+        "exchange": "HOSE",
+        "analysis_date": target,
+        "prices": [
+            {
+                "date": d.date().isoformat(),
+                "open": 10000.0,
+                "high": 10100.0,
+                "low": 9900.0,
+                "close": 10000.0,
+                "volume": 1000000.0,
+            }
+            for d in dates
+        ],
+        "statements": book,
+        "news": [],
+        "metrics": {
+            k: {
+                "value": v,
+                "unit": "ratio",
+                "formula": "Offline fixture",
+                "source": "Deterministic fixture",
+                "asof": target,
+                "status": "available",
+            }
+            for k, v in {
+                "close": 10000.0,
+                "adv20": 1000000.0,
+                "volatility20_annual": 0.2,
+                "historical_var95_1d": 0.02,
+            }.items()
+        },
+        "currency": "VND",
+        "provider": "Offline deterministic fixture",
+        "missing": [],
+        "basis": [],
+        "warnings": [],
+        "sources": [],
+        "fingerprint": "vn-full-graph-fixture",
+    }
+
+    tool_results = []
+
+    class DesktopScriptedModel(ScriptedModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            tool_results.extend(m for m in messages if isinstance(m, ToolMessage))
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+        def with_structured_output(self, schema, **kwargs):
+            def answer(value):
+                self._count()
+                if schema is GroundedSentimentReport:
+                    return schema(
+                        overall_band="Neutral",
+                        overall_score=5,
+                        confidence="low",
+                        narrative="Offline fixture; no sentiment evidence.",
+                        context_readback=ledger(quant, messages(value)),
+                        evidence_claims=[],
+                    )
+                if schema is ExecutablePortfolioDecision:
+                    return schema(
+                        rating="Buy",
+                        executive_summary="Offline orchestration fixture.",
+                        investment_thesis="Not an investment recommendation.",
+                        execution={
+                            "action": execution_action,
+                            "quantity": 100 if execution_action == "Buy" else 0,
+                            "limit_price": 10000.0 if execution_action == "Buy" else None,
+                            "rationale": "Fixture verifies pending proposal only.",
+                            "data_gaps": [],
+                        },
+                    )
+                return STRUCTURED[schema]
+
+            return RunnableLambda(answer)
+
+    model = DesktopScriptedModel(structured=True)
+    cfg = integration.configure({"desktop_vietnam": {"enabled": True, "paper_enabled": True}})
+    graph = _graph(
+        tmp_path,
+        monkeypatch,
+        model,
+        desktop_vietnam=cfg["desktop_vietnam"],
+        benchmark_map=cfg["benchmark_map"],
+        desktop_role_models=balanced_routes(),
+        checkpoint_enabled=True,
+    )
+    monkeypatch.setattr(
+        clients, "create_tier_client", lambda config, tier, **kwargs: _Client(model)
+    )
+    monkeypatch.setattr(vietnam, "load", lambda *a, **kw: copy.deepcopy(quant))
+    usage = TokenUsage()
+    from collections import Counter
+
+    from desktop.model_routing import ROLE_NAMES
+
+    memory_calls = []
+    original_memory = graph._memory_step
+
+    def observe_original_memory(state):
+        value = original_memory(state)
+        memory_calls.append(value)
+        return value
+
+    graph._memory_step = observe_original_memory
+    q, runtime, portfolio, store = integration.prepare(
+        graph, "VCB.VN", target, None, graph.config, [usage], lambda *a: None, allow_paper=True
+    )
+    with vietnam.vendor_scope(q), vietnam.settlement_scope(graph.config):
+        state, rating = graph.propagate("VCB.VN", target, portfolio=portfolio)
+    assert rating == "Buy" and runtime.decision["execution"]["action"] == execution_action
+    for key in (
+        "market_report",
+        "sentiment_report",
+        "news_report",
+        "fundamentals_report",
+        "investment_plan",
+        "trader_investment_plan",
+        "final_trade_decision",
+    ):
+        assert state[key].strip(), key
+    for key in ("bull_history", "bear_history"):
+        assert state["investment_debate_state"][key]
+    for key in ("aggressive_history", "conservative_history", "neutral_history"):
+        assert state["risk_debate_state"][key]
+    assert tool_results
+    assert not [m for m in tool_results if m.status == "error"]
+    assert len(runtime.handoffs) == 12
+    assert set(graph.workflow.nodes) == set(ROLE_NAMES)
+    assert len(memory_calls) == 1
+    assert Counter(spec["provider"] for spec in graph.config["desktop_role_models"].values()) == {
+        "codex_cli": 6,
+        "deepseek": 6,
+        "agy_cli": 1,
+    }
+    assert runtime.grounding["Sentiment Analyst"]["validated"]
+    assert {r["snapshot_fingerprint"] for r in runtime.handoffs.values()} == {quant["fingerprint"]}
+    output = tmp_path / "desktop-evidence"
+    output.mkdir()
+    result = integration.artifacts(output, q, runtime, usage, store, "offline-graph-fixture")
+    assert result["paper_proposal"]["status"] == (
+        "PROPOSED" if execution_action == "Buy" else "NO_ORDER"
+    )
+    account = store.snapshot()
+    assert account["cash"] == account["nav"] == 3000000 and not account["positions"]
+    assert len(account["orders"]) == (1 if execution_action == "Buy" else 0)
+    assert all(order["approved_at"] is None for order in account["orders"])
+    assert [e["rating"] for e in graph.memory_log.load_entries()] == ["Buy"]
