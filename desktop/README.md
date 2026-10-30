@@ -110,26 +110,11 @@ calls the original utility, requires native confirmation and is blocked during
 a job. A real original-mode UI run resumed its retained checkpoint and completed
 all13 report sections; its earlier provider exit was not replaced with fake output.
 
-### Three-provider evidence council (desktop extension)
+### Dedicated Trading Agents integration
 
-`desktop_council` enables an advisory review after the unchanged upstream graph,
-decision logging, memory and report writer succeed. `desktop_role_models` can
-simultaneously distribute the original roles across Codex CLI, agy CLI and
-DeepSeek API. Council models are separately configurable; all three are required.
-
-`council.py` captures returned tool observations, sentiment prefetch model inputs,
-source warnings, portfolio and full returned graph state. It partitions the JSON
-losslessly into UTF-8 packets, sends every packet to every peer, saves receipts
-and waits for all readers before independent reviews. Each subsequent discussion
-round gives every peer all three preceding reviews. DeepSeek edits the synthesis;
-all three check it, with one bounded revision/recheck cycle if needed. Remaining
-concerns are shown instead of forced consensus. No council output overwrites the
-upstream rating or memory, so backtest scoring continues to describe that strategy.
-
-Successful steps are private cached checkpoints. A saved `council-request.json`
-allows the report library's resume action to retry missing council work without
-rerunning the core or recording its decision again. Failure never substitutes a
-provider. Saved artifacts include `7_council/{council,codex,antigravity,deepseek}.md`,
-`transcript.json`, packet hashes and execution metadata. Resumed upstream graphs
-explicitly disclose that earlier raw tool observations may exist only in reports.
-The provider default IDs remain CLI-resolved and are not claimed as verified IDs.
+The final advisory council was removed at the user's request. Original graph
+roles can be distributed across Codex CLI, DeepSeek API and Antigravity/agy;
+there is no extra final council or synthesis phase. See DESKTOP-INTEGRATION.md
+for the current role routing, canonical VN data, reports, execution schema and
+consent-gated 3M VND paper account. Older saved reports describe their original
+run settings and do not redefine the current account or next-run model routing.

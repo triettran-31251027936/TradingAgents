@@ -73,7 +73,7 @@ material gaps. Invalid structured output never becomes an order extracted from
 prose. `Hold` creates no order. An explicit manual portfolio is not treated as
 the virtual account.
 
-The Backtrader/BackBroker account starts with VND 100,000,000 in virtual cash.
+The legacy Backtrader/BackBroker daily-replay account started with VND 100,000,000 in virtual cash; it is preserved separately and is no longer the active portfolio account (see the 3M practice account below).
 The local simulation policy is board lots of 100, a 20% per-position cap,
 0.15% commission, 0.1% sell tax and a conservative two-session settlement lock.
 These are disclosed simulation assumptions, not full exchange-rule coverage.
@@ -185,7 +185,7 @@ not an audit of statements or protection against all accounting restatements.
 FCF requires aligned periods and signed non-positive asset-purchase cashflow;
 the provider definition can include other long-term assets. Quarterly EPS is
 labelled as a reported-period value and is never summed to invent EPS TTM.
-PE/PB/ROE remain explicitly missing pending the required consistent inputs.
+Current PE/PB and parent-scoped ROE are now derived when their inputs pass the valuation checks below; absent or inconsistent inputs remain explicitly missing.
 
 A fresh public FPT dataset validated 50 available metrics of 53 defined, with
 PE/PB/ROE withheld. No LLM or paid API call was needed for that source test.
@@ -271,3 +271,47 @@ order endpoint: https://developers.ssi.com.vn/docs/faq/service-overview . Backtr
 broker simulation is the selected open-source alternative:
 https://github.com/mementum/backtrader . The simulator does not reproduce exchange
 queue priority, auctions, corporate actions or a full authoritative holiday calendar.
+
+### Validated VN valuation inputs (schema v4)
+
+The adapter now calls Vietcap `statistics-financial` in addition to statement
+metadata, income, balance and cash-flow sources. Provider comparison ratios are
+separate metrics. They never silently replace Python calculations. Current PE is
+observed market capitalization divided by positive reconciled parent profit TTM;
+PB uses parent-attributable equity, subtracting explicit non-controlling interests.
+ROE uses the same parent profit scope and the arithmetic average of equity at
+TTM end and exactly one year earlier. This is a two-point average, not a daily
+weighted figure. Both balance sheets must satisfy assets - liabilities = equity.
+
+Market-cap facts are accepted only for the retrieval's VN calendar date, from
+current company/details (price and issued-share checks) or a statistics period
+matching the published statement window. Cap/shares must match the canonical
+completed close within 0.001%; shares must be positive integers. PE/PB additionally
+require explicitly zero preferred equity capital. The observed cap/share facts
+remain available even when preferred-capital scope blocks PE/PB. Preferred shares in debt
+and in paid-in capital are distinguished through provider metadata hierarchy.
+Historical/current data must not be mixed: historical PE/PB remain withheld if a
+same-date observation was not supplied. Statement ROE remains usable with dated
+inputs. No weighted-average EPS is inferred from current outstanding shares.
+
+The snapshot retains metadata, raw source hashes, valuation_reconciliation and
+separate provider PE/PB/ROE observations. All metric values, formulas and gaps flow
+through the existing canonical capsule to the original graph roles and reports.
+A live FPT test on 2026-10-30 returned 60/60 metrics, including computed PE
+9.659960943, PB 2.317926882 and ROE 0.261556570. The provider's PE 9.618355198 and
+ROE 0.260182172 differ; both are retained as comparison observations, not forced
+to agree. This is one issuer/source-time verification, not universal coverage or
+an independently audited statement validation.
+
+Current issuer profiles are obtained from company/details, matched to the ticker,
+converted to plain text and delivered through the canonical capsule and exported
+evidence report. Broker ratings, target prices and projections are not copied into
+issuer facts. Current profile content is withheld in historical analysis.
+
+A three-issuer check found: FPT computed PE/PB/ROE available; HPG computed PE/PB/ROE
+available after using current company-details cap rather than stale Q2 statistics;
+VCB parent-scoped ROE and current cap/shares available, while PE/PB remain withheld
+because its statement metadata does not establish an explicit preferred-capital
+split. Bank-specific aliases distinguish TOTAL LIABILITIES and Minority interest.
+Industrial revenue/current-assets/CFO definitions do not automatically describe a
+bank; the remaining VCB gaps are recorded, not filled with industrial substitutes.

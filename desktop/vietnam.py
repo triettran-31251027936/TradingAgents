@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 3
+VERSION = 4
 LOCK = threading.Lock()
 
 
@@ -179,7 +179,10 @@ def statements(raw, metadata, asof):
             if r.get("field")
         }
         data = raw.get(kind, {}).get("data") or {}
-        result[kind] = {"fields": mapping}
+        result[kind] = {
+            "fields": mapping,
+            "field_metadata": {r["field"]: r for r in metadata.get(section, []) if r.get("field")},
+        }
         for period in ("quarters", "years"):
             rows = [r for r in data.get(period, []) if _published(r, asof)]
             rows.sort(key=lambda r: (int(r["yearReport"]), int(r.get("lengthReport", 5))))
@@ -194,7 +197,17 @@ def field(book, kind, *titles):
     return None
 
 
-def compute(rows, book, benchmark=None):
+def compute(
+    rows,
+    book,
+    benchmark=None,
+    *,
+    valuation_raw=None,
+    asof=None,
+    observed_at=None,
+    valuation_proof=None,
+    company_profile=None,
+):
     df = pd.DataFrame(rows).set_index("date")
     close = df["close"]
     ret = close.pct_change(fill_method=None).dropna()
@@ -401,6 +414,20 @@ def compute(rows, book, benchmark=None):
     from desktop.financial_metrics import extend
 
     extend(book, add, field)
+    from desktop.valuation import extend as extend_valuation
+
+    proof = extend_valuation(
+        book,
+        rows,
+        valuation_raw or {},
+        asof or rows[-1]["date"],
+        observed_at or datetime.now(TZ),
+        add,
+        field,
+        company_profile=company_profile,
+    )
+    if valuation_proof is not None:
+        valuation_proof.update(proof)
     return _safe(metrics), missing
 
 
@@ -514,7 +541,27 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             ]:
                 fetch(name, f"{FINANCE}/{ticker}/financial-statement?section={section}")
         book = statements(raw, metadata, asof)
-        metrics, missing = compute(prices, book, benchmark)
+        valuation_raw = (
+            {} if prices_only else fetch("valuation", f"{FINANCE}/{ticker}/statistics-financial")
+        )
+        details = (
+            {} if prices_only else fetch("company_details", f"{FINANCE}/details?ticker={ticker}")
+        )
+        valuation_observed_at = datetime.now(TZ).isoformat()
+        from desktop.company_profile import normalize as normalize_company
+
+        company_profile = normalize_company(details, ticker, asof, valuation_observed_at)
+        valuation_proof = {}
+        metrics, missing = compute(
+            prices,
+            book,
+            benchmark,
+            valuation_raw=valuation_raw,
+            asof=asof,
+            observed_at=valuation_observed_at,
+            valuation_proof=valuation_proof,
+            company_profile=company_profile,
+        )
         from desktop.financial_metrics import reconcile
 
         reconciliation = {
@@ -559,6 +606,9 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             "statements": book,
             "metrics": metrics,
             "financial_reconciliation": reconciliation,
+            "company_profile": company_profile,
+            "valuation_observed_at": valuation_observed_at,
+            "valuation_reconciliation": valuation_proof,
             "missing": missing,
             "warnings": warnings,
             "news": news,
@@ -584,6 +634,7 @@ def capsule(bundle):
             for k in [
                 "ticker",
                 "company_name",
+                "company_profile",
                 "exchange",
                 "analysis_date",
                 "currency",
@@ -594,6 +645,7 @@ def capsule(bundle):
                 "basis",
                 "fingerprint",
             ]
+            if k in bundle
         },
         ensure_ascii=False,
         allow_nan=False,

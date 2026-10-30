@@ -99,6 +99,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
         vietnam.write_json(folder / "quantitative.json", quant)
         result["quantitative"] = {
             "ticker": quant["ticker"],
+            "company_profile": quant.get("company_profile", {}),
             "quote_date": quant["prices"][-1]["date"],
             "metrics": quant["metrics"],
             "missing": quant["missing"],
@@ -106,6 +107,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "basis": quant["basis"],
             "sources": quant["sources"],
             "financial_reconciliation": quant.get("financial_reconciliation", {}),
+            "valuation_reconciliation": quant.get("valuation_reconciliation", {}),
         }
     if runtime:
         result["grounding"] = runtime.grounding
@@ -155,6 +157,18 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
     text = "## Canonical evidence and virtual execution\n\n"
     if q:
         text += f"Ticker: {q['ticker']} · latest completed quote: {q['quote_date']}\n\n"
+        profile = q.get("company_profile") or {}
+        if profile.get("status") == "available":
+            text += "### Issuer profile observed " + cell(profile.get("observed_at")) + "\n\n"
+            text += (
+                cell(profile.get("description_vi") or profile.get("description_en") or "") + "\n\n"
+            )
+            text += (
+                "Sector: "
+                + cell(profile.get("sector_vi") or profile.get("sector") or "unavailable")
+                + ". Source: Vietcap company/details. Current observation, not a historical profile archive.\n\n"
+            )
+
         text += "| Metric | Value | Unit | As of | Formula / source |\n|---|---:|---|---|---|\n"
         for name, m in q["metrics"].items():
             values = (

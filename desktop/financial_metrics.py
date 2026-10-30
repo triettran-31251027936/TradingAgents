@@ -204,19 +204,5 @@ def extend(book, add, field):
         source,
         stamp,
     )
-    for name, reason in [
-        (
-            "pe_ttm",
-            "Requires validated current share/weighted-share and split-consistent EPS TTM; no estimate",
-        ),
-        (
-            "pb",
-            "Requires verified same-date outstanding shares and matching equity/corporate-action basis",
-        ),
-        (
-            "roe_ttm",
-            "Requires consistently scoped attributable profit and average equity across comparable statement dates",
-        ),
-    ]:
-        add(name, None, "ratio" if name != "roe_ttm" else "fraction", reason, source, stamp)
+    # Price/share-based valuation is added separately with observable-date checks.
     return proof
