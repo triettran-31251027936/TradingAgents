@@ -88,16 +88,17 @@ def config():
         value.pop("desktop_role_models", None)
     value.pop("desktop_council", None)
     value.update(MANAGED)
-    from desktop.integration import configure
-
-    return configure(value)
+    if value.get("desktop_vietnam", {}).get("enabled"):
+        value["benchmark_map"] = {**value.get("benchmark_map", {}), ".VN": "VNINDEX.VN"}
+    return value
 
 
 def save_config(value):
     if not isinstance(value, dict):
         raise ValueError("Cấu hình phải là JSON object.")
     unknown = set(value) - (
-        set(DEFAULT_CONFIG) | {"desktop_role_models", "desktop_usage", "desktop_vietnam"}
+        set(DEFAULT_CONFIG)
+        | {"desktop_role_models", "desktop_usage", "desktop_vietnam", "desktop_budget"}
     )
     if unknown:
         raise ValueError("Không có tham số: " + ", ".join(sorted(unknown)))
@@ -136,6 +137,9 @@ def save_config(value):
         if name in value and any(type(v) is not bool for v in value[name].values()):
             raise ValueError(name + " chỉ nhận cờ boolean.")
     candidate = {**DEFAULT_CONFIG, **value}
+    from desktop.budget import validate_config
+
+    validate_config(candidate)
     if 2 * candidate["max_tool_rounds"] + 2 >= candidate["max_recur_limit"]:
         raise ValueError("max_recur_limit phải lớn hơn 2 × max_tool_rounds + 2.")
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -322,7 +326,11 @@ def analyze(payload, cfg):
 
     usage = TokenUsage()
     callbacks = [handler]
-    if cfg.get("desktop_usage", {}).get("enabled") or cfg.get("desktop_vietnam", {}).get("enabled"):
+    if (
+        cfg.get("desktop_usage", {}).get("enabled")
+        or cfg.get("desktop_vietnam", {}).get("enabled")
+        or cfg.get("desktop_budget", {}).get("enabled")
+    ):
         callbacks.append(usage)
     graph = TradingAgentsGraph(chosen, config=cfg, callbacks=callbacks)
     from desktop.integration import append_evidence, artifacts, prepare
@@ -519,7 +527,10 @@ def dispatch(action, payload):
         if provider not in ("deepseek", "codex_cli", "agy_cli", "chatgpt"):
             raise ValueError("Chọn một nhà cung cấp đã hỗ trợ.")
         try:
-            model = create_llm_client(provider, payload.get("model") or "default").get_llm()
+            controls = {"max_retries": 0, "max_tokens": 256} if provider == "deepseek" else {}
+            model = create_llm_client(
+                provider, payload.get("model") or "default", **controls
+            ).get_llm()
             model.invoke("Reply with OK. Do not use any tools.")
         except Exception as exc:
             raise RuntimeError(
@@ -663,8 +674,10 @@ def dispatch(action, payload):
         handler = callback()
         graph = TradingAgentsGraph(config=cfg, callbacks=[handler])
         from desktop.model_routing import apply_role_models
+        from desktop.runtime_models import Runtime
 
-        apply_role_models(graph, cfg.get("desktop_role_models", {}), [handler])
+        runtime = Runtime(cfg) if cfg.get("desktop_budget", {}).get("enabled") else None
+        apply_role_models(graph, cfg.get("desktop_role_models", {}), [handler], runtime=runtime)
         from desktop.vietnam import settlement_scope
 
         with settlement_scope(cfg):

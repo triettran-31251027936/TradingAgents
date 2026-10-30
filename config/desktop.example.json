@@ -1,0 +1,93 @@
+{
+  "llm_provider": "codex_cli",
+  "quick_think_provider": "codex_cli",
+  "quick_think_llm": "gpt-6-luna",
+  "deep_think_provider": "codex_cli",
+  "deep_think_llm": "gpt-6.1-sol",
+  "max_tokens": null,
+  "max_tool_rounds": 6,
+  "max_debate_rounds": 1,
+  "max_risk_discuss_rounds": 1,
+  "output_language": "Vietnamese",
+  "checkpoint_enabled": true,
+  "desktop_vietnam": {
+    "enabled": true,
+    "paper_enabled": true
+  },
+  "desktop_usage": {
+    "enabled": true,
+    "cache_enabled": true
+  },
+  "desktop_budget": {
+    "enabled": true,
+    "deepseek_max_requests": 1,
+    "deepseek_max_output_tokens": 1024,
+    "deepseek_in_backtest": false
+  },
+  "desktop_role_models": {
+    "Market Analyst": {
+      "provider": "codex_cli",
+      "model": "gpt-6-luna",
+      "effort": "medium"
+    },
+    "Sentiment Analyst": {
+      "provider": "agy_cli",
+      "model": "gemini-3.8-flash-high"
+    },
+    "News Analyst": {
+      "provider": "codex_cli",
+      "model": "gpt-6-luna",
+      "effort": "medium"
+    },
+    "Fundamentals Analyst": {
+      "provider": "codex_cli",
+      "model": "gpt-6-luna",
+      "effort": "medium"
+    },
+    "Bull Researcher": {
+      "provider": "codex_cli",
+      "model": "gpt-6.1-sol",
+      "effort": "low"
+    },
+    "Bear Researcher": {
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "max_tokens": 1024
+    },
+    "Research Manager": {
+      "provider": "codex_cli",
+      "model": "gpt-6.1-sol",
+      "effort": "medium"
+    },
+    "Trader": {
+      "provider": "codex_cli",
+      "model": "gpt-6.1-sol",
+      "effort": "medium"
+    },
+    "Aggressive Analyst": {
+      "provider": "codex_cli",
+      "model": "gpt-6.1-sol",
+      "effort": "low"
+    },
+    "Conservative Analyst": {
+      "provider": "codex_cli",
+      "model": "gpt-6.1-sol",
+      "effort": "medium"
+    },
+    "Neutral Analyst": {
+      "provider": "codex_cli",
+      "model": "gpt-6.1-sol",
+      "effort": "low"
+    },
+    "Portfolio Manager": {
+      "provider": "codex_cli",
+      "model": "gpt-6.1-sol",
+      "effort": "high"
+    },
+    "Memory Log": {
+      "provider": "codex_cli",
+      "model": "gpt-6-luna",
+      "effort": "medium"
+    }
+  }
+}

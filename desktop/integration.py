@@ -84,7 +84,9 @@ def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper
         )
     runtime = (
         Runtime(cfg, quant=quant, book=book, emit=emit)
-        if quant or cfg.get("desktop_usage", {}).get("enabled")
+        if quant
+        or cfg.get("desktop_usage", {}).get("enabled")
+        or cfg.get("desktop_budget", {}).get("enabled")
         else None
     )
     apply_role_models(graph, cfg.get("desktop_role_models", {}), callbacks, runtime=runtime)
@@ -105,6 +107,9 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "sources": quant["sources"],
         }
     if runtime:
+        result["grounding"] = runtime.grounding
+        result["paid_budget"] = runtime.paid_budget.summary()
+        vietnam.write_json(folder / "grounding.json", runtime.grounding)
         result["usage"] = {**usage.summary(), "roles": runtime.stats}
         vietnam.write_json(folder / "usage.json", result["usage"])
         if runtime.decision:
@@ -205,6 +210,10 @@ def backtest_scope(cfg, emit):
 
     class Graph(original):
         def __init__(self, *args, **kwargs):
+            from desktop.budget import backtest_config
+
+            if "config" in kwargs:
+                kwargs["config"] = backtest_config(kwargs["config"])
             super().__init__(*args, **kwargs)
             self._desktop_base_config = copy.deepcopy(self.config)
             self._desktop_identity = self.resolve_instrument_context

@@ -21,14 +21,17 @@ and `outputs/`. Never commit credentials or personal reports.
 
 ## Models
 
-The installed profile uses explicit requested IDs:
+The latest installed profile prioritizes Codex to protect the user's small DeepSeek API balance. Requested IDs:
 
 | Roles | Backend | Requested model |
 |---|---|---|
+| Market, News, Fundamentals, Memory reflection | Codex CLI | gpt-6-luna, medium effort |
+| Bull, Trader, three Risk roles | Codex CLI | gpt-6.1-sol, low/medium effort |
 | Research Manager | Codex CLI | gpt-6.1-sol, medium effort |
 | Portfolio Manager | Codex CLI | gpt-6.1-sol, high effort |
-| Sentiment, Bull, Aggressive Risk | agy CLI | gemini-3.8-flash-high |
-| Market, News, Fundamentals, Bear, Trader, Conservative/Neutral Risk, reflection | DeepSeek API | deepseek-flash (V4.1 Flash alias) |
+| Sentiment with context readback | agy CLI | gemini-3.8-flash-high |
+| Bear only | DeepSeek API | deepseek-flash, max output 1024 tokens, SDK retries disabled |
+
 
 CLI processes use their own existing sign-ins. Financial tools are requested
 through structured messages and executed by Python, with results fed back into
@@ -126,3 +129,49 @@ No cost or subscription-limit percentage is inferred from token counts.
 
 The upstream core's preservation and passing tests are evidence of workflow
 compatibility, not proof of predictive accuracy or complete Vietnamese data.
+
+## Antigravity context and startup hardening
+
+The default assigns only Sentiment to Antigravity. Bull and Aggressive Risk
+now use Codex under the low-API profile, because completing a CLI call does not
+demonstrate evidence synthesis quality. Antigravity receives readable role-separated messages and a
+source ledger. A grounded Sentiment schema must read back the exact ticker,
+date, snapshot, news IDs and availability of social feeds. Claims need valid
+source references; sparse inputs require low confidence. Selected unsupported
+valuation figures are rejected. The original free-text fallback cannot bypass
+this check. Receipts are saved in grounding.json and displayed in the report.
+These are bounded grounding checks, not a claim of complete semantic validation.
+
+A second full real graph run completed all 13 roles in 222.9 seconds with the
+new assignment, four dated news items and a validated Antigravity receipt.
+PM again returned Underweight + virtual Hold. No user order was approved.
+
+Chromium session caches are isolated by build, GPU acceleration is disabled
+for this document interface, and inherited Python launcher/path variables are
+removed from bridge children. Lightweight metadata no longer imports the data
+engine. A private last-successful metadata snapshot is for startup display only;
+mutating actions require fresh engine metadata. Optional subscription status
+is loaded when Settings is opened, rather than blocking startup. Idle bridge
+children are cancelled on quit; quick requests have a bounded timeout.
+
+## Small paid-API budget (latest user preference)
+
+The active plan is 11 Codex roles, 1 Antigravity role and 1 DeepSeek role.
+DeepSeek is limited to one Bear call per analysis, with 1024 output tokens and
+SDK retries disabled. Exact cache hits do not consume the request limit; failed
+attempts do. The runtime rejects further paid attempts before invoking the
+backend. Presets and saved configuration are checked against the cap, including
+the minimum calls implied by extra debate rounds.
+
+Backtests substitute Codex for DeepSeek by default. Enabling DeepSeek for a
+backtest is explicit; its request cap is then per cell, so a large grid can
+spend more. Settings expose the request/output limits and this opt-in. These
+limits are not a verified USD balance or dollar-cost guarantee. The native
+provider-connection test is explicit and makes a paid API call if clicked; it
+was not run after the user disclosed the 2 USD budget. No further live DeepSeek
+validation was performed after that disclosure.
+
+Earlier real-run measurements in this document used the prior model allocation.
+They validate the integration, not the new 11-role Codex allocation. The latest
+budget policy is checked with isolated backend doubles, without spending API
+credit. config/desktop.example.json contains a sanitized reproducible profile.

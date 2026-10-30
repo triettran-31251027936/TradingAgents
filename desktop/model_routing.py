@@ -81,6 +81,12 @@ class RoleModel(Runnable):
             )
         model = self.models.get(role, self.fallback)
         schema = self.schema
+        plain_sentiment = False
+        if self.runtime and self.runtime.guarded_sentiment(role):
+            from desktop.grounding import GroundedSentimentReport
+
+            plain_sentiment = schema is None
+            schema = GroundedSentimentReport
         if self.runtime and self.runtime.quant and role == "Portfolio Manager":
             from desktop.runtime_models import ExecutablePortfolioDecision
             from tradingagents.agents.schemas import PortfolioDecision
@@ -93,9 +99,16 @@ class RoleModel(Runnable):
             model = model.bind_tools(self.tools, **self.tool_kwargs)
         if self.runtime and role in ROLE_NAMES:
             value = self.runtime.prompt(input, role)
-            return self.runtime.invoke(
+            result = self.runtime.invoke(
                 role, self.specs.get(role, {}), model, value, cfg, schema=schema
             )
+            if plain_sentiment:
+                from langchain_core.messages import AIMessage
+
+                from tradingagents.agents.schemas import render_sentiment_report
+
+                return AIMessage(content=render_sentiment_report(result))
+            return result
         return model.invoke(input, config=cfg, **kwargs)
 
 
@@ -128,6 +141,9 @@ def apply_role_models(graph, routes, callbacks=(), runtime=None):
             }
             if spec.get("max_tokens") is not None:
                 cfg["max_tokens"] = spec["max_tokens"]
+            from desktop.budget import constrain
+
+            cfg = constrain(cfg, spec)
             cache[key] = create_tier_client(
                 cfg,
                 "quick",

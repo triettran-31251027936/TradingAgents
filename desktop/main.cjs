@@ -8,19 +8,36 @@ const manifest=JSON.parse(fs.readFileSync(path.join(process.resourcesPath,'tradi
 app.setName('Trading Agents');
 const desktopUserData=path.join(manifest.repo,'work','desktop-userdata');
 fs.mkdirSync(desktopUserData,{recursive:true});app.setPath('userData',desktopUserData);
-let window,active=null,quitting=false;
+// Keep preferences, reports and account data stable; isolate Chromium caches per build.
+const cacheRevision=crypto.createHash('sha256');
+for(const file of ['main.cjs','index.html','app.js','app.css'])cacheRevision.update(fs.readFileSync(path.join(__dirname,file)));
+const sessionCache=path.join(desktopUserData,'session-cache',cacheRevision.digest('hex').slice(0,16));
+fs.mkdirSync(sessionCache,{recursive:true});app.setPath('sessionData',sessionCache);
+app.disableHardwareAcceleration();app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+const startupLog=path.join(desktopUserData,'startup.log');
+function startupFailure(error){fs.appendFileSync(startupLog,new Date().toISOString()+' '+String(error?.stack||error)+'\n');}
+process.on('unhandledRejection',startupFailure);
+fs.appendFileSync(startupLog,new Date().toISOString()+' boot\n');
+let window,active=null,quitting=false,engineReady=false,metaPromise=null;
+const bridgeChildren=new Set();
+const bootstrapFile=path.join(desktopUserData,'startup-meta.json');
 const quickActions=new Set(['meta','history','report','memory','save_config','doctor','subscription_status','subscription_redirect','subscription_logout','subscription_models','api_key_status','save_api_key','remove_api_key','paper_snapshot','paper_preview']);
 const jobActions=new Set(['analyze','backtest','settle','subscription_login','test_provider','paper_advance']);
 function send(type,payload){if(window&&!window.isDestroyed())window.webContents.send('ta:event',{type,payload});}
 function bridge(action,payload={},long=false,approvalKey=null){
+ if(action==='meta')startupFailure('meta spawn requested');
  return new Promise((resolve,reject)=>{
   const childEnv={...process.env,PYTHONUNBUFFERED:'1',PATH:[path.join(app.getPath('home'),'.local','bin'),'/opt/homebrew/bin','/usr/local/bin',process.env.PATH||''].join(':')};
-  delete childEnv.TRADINGAGENTS_PAPER_APPROVAL_KEY;
+  for(const key of ['TRADINGAGENTS_PAPER_APPROVAL_KEY','PYTHONHOME','PYTHONPATH','PYTHONEXECUTABLE','__PYVENV_LAUNCHER__','PYTHONSTARTUP'])delete childEnv[key];
+  childEnv.PYTHONDONTWRITEBYTECODE='1';
   if(approvalKey)childEnv.TRADINGAGENTS_PAPER_APPROVAL_KEY=approvalKey;
   const child=spawn(manifest.python,[path.join(manifest.repo,'desktop','bridge.py')],{
    cwd:manifest.repo,env:childEnv,
    stdio:['pipe','pipe','pipe'],detached:true
   });
+  bridgeChildren.add(child);
+  const watchdog=long?null:setTimeout(()=>{bridgeChildren.delete(child);try{process.kill(-child.pid,'SIGKILL');}catch{}reject(new Error('Không nhận được phản hồi kịp thời. Làm mới dữ liệu để kiểm tra trạng thái trước khi thử lại.'));},action==='meta'?90000:45000);
+  watchdog?.unref();
   let buffer='',result,error,stderr=false;
   if(long)active={child,action,payload,started:Date.now(),cancelled:false};
   child.stdout.setEncoding('utf8');child.stdout.on('data',chunk=>{
@@ -30,11 +47,14 @@ function bridge(action,payload={},long=false,approvalKey=null){
    }
   });
   child.stderr.on('data',()=>{stderr=true;});
-  child.on('error',err=>{if(long)active=null;reject(new Error('Không mở được Python của TradingAgents: '+err.code));});
+  child.on('error',err=>{if(watchdog)clearTimeout(watchdog);bridgeChildren.delete(child);if(long)active=null;reject(new Error('Không mở được Python của TradingAgents: '+err.code));});
   child.on('close',code=>{
-   const cancelled=long&&active?.cancelled;const action=long?active?.action:null;
+   if(watchdog)clearTimeout(watchdog);
+   bridgeChildren.delete(child);
+   if(action==='meta')startupFailure('meta closed '+code);
+   const cancelled=long&&active?.cancelled;const jobAction=long?active?.action:null;
    if(long)active=null;
-   if(cancelled){send('cancelled',{message:action==='subscription_login'?'Đã hủy phiên đăng nhập ChatGPT.':'Đã dừng. Có thể chạy lại cùng mã, ngày và cấu hình để tiếp tục từ checkpoint.'});resolve({cancelled:true});}
+   if(cancelled){send('cancelled',{message:jobAction==='subscription_login'?'Đã hủy phiên đăng nhập ChatGPT.':'Đã dừng. Có thể chạy lại cùng mã, ngày và cấu hình để tiếp tục từ checkpoint.'});resolve({cancelled:true});}
    else if(error||code!==0||result===undefined){const message=error?.message||'Tiến trình TradingAgents kết thúc trước khi trả kết quả.';if(long)send('failed',{message,type:error?.type||'ProcessError'});reject(new Error(message));}
    else {if(long)send('completed',result);resolve(result);}
   });
@@ -58,6 +78,15 @@ function stopJob(){
 function checkSender(event){if(!window||event.sender!==window.webContents)throw new Error('Invalid desktop sender');}
 ipcMain.handle('ta:request',async(event,action,payload)=>{
  checkSender(event);
+ if(action==='meta')startupFailure('meta IPC received');
+ if(action==='bootstrap'){
+  try{return JSON.parse(fs.readFileSync(bootstrapFile,'utf8'));}catch{return null;}
+ }
+ if(action==='meta'){
+  if(!metaPromise)metaPromise=bridge('meta',{}).then(meta=>{engineReady=true;fs.writeFileSync(bootstrapFile,JSON.stringify(meta),{mode:0o600});return meta;}).finally(()=>{metaPromise=null;});
+  return metaPromise;
+ }
+ if(['save_config','save_api_key','remove_api_key','paper_review','paper_reject','start'].includes(action)&&!engineReady)throw new Error('Bộ dữ liệu đang khởi động. Chờ đồng bộ cấu hình trước khi thực hiện.');
  if(quickActions.has(action))return bridge(action,payload||{});
  if(action==='paper_reject'){if(active||approving)throw new Error('Chờ tác vụ hiện tại kết thúc.');return bridge(action,payload||{});}
  if(action==='paper_review'){
@@ -100,6 +129,8 @@ app.whenReady().then(()=>{
  nativeTheme.themeSource='dark';
  window=new BrowserWindow({width:1480,height:980,minWidth:1024,minHeight:700,title:'Trading Agents',backgroundColor:'#09121e',titleBarStyle:'hiddenInset',trafficLightPosition:{x:18,y:20},
   webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+ window.webContents.on('console-message',(_event,...details)=>startupFailure('console '+JSON.stringify(details)));
+ window.webContents.on('preload-error',(_event,_file,error)=>startupFailure(error));
  window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
  window.webContents.on('will-navigate',(event,url)=>{if(url!==window.webContents.getURL())event.preventDefault();});
  window.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
@@ -114,9 +145,13 @@ app.whenReady().then(()=>{
   {label:'Cửa sổ',submenu:[{role:'minimize'},{role:'zoom'},{role:'togglefullscreen'}]},
   {label:'Trợ giúp',submenu:[{label:'Hướng dẫn TradingAgents',click:()=>shell.openExternal('https://github.com/triettran-31251027936/TradingAgents/tree/codex/agentsroom-cli-backends')}]}
  ]));
- window.loadFile(path.join(__dirname,'index.html'));
+ window.webContents.on('did-finish-load',()=>fs.appendFileSync(startupLog,new Date().toISOString()+' ready\n'));
+ window.webContents.on('did-fail-load',(_event,code,description)=>startupFailure('load '+code+' '+description));
+ window.webContents.on('render-process-gone',(_event,details)=>startupFailure('renderer '+JSON.stringify(details)));
+ window.loadFile(path.join(__dirname,'index.html')).catch(startupFailure);
  window.on('close',event=>{
   if(active&&!quitting){event.preventDefault();const response=dialog.showMessageBoxSync(window,{type:'question',buttons:['Tiếp tục chạy','Dừng và thoát'],defaultId:0,cancelId:0,title:'Trading Agents đang phân tích',message:'Tác vụ chưa hoàn tất. Dừng tác vụ và thoát?',detail:active.action==='subscription_login'?'Phiên đăng nhập này sẽ bị hủy.':'Các bước đã lưu checkpoint có thể được tiếp tục khi chạy lại cùng cấu hình.'});if(response===1){quitting=true;stopJob().then(()=>app.quit());}}
  });
 });
+app.on('before-quit',()=>{for(const child of bridgeChildren){if(child!==active?.child){try{process.kill(-child.pid,'SIGKILL');}catch{}}}});
 app.on('window-all-closed',()=>app.quit());

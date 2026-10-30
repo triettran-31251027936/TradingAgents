@@ -87,6 +87,19 @@ class Runtime:
         self.lock = threading.Lock()
         self.stats = {}
         self.decision = None
+        self.grounding = {}
+        from desktop.budget import PaidBudget
+
+        self.paid_budget = PaidBudget(cfg)
+
+    def guarded_sentiment(self, role):
+        spec = self.cfg.get("desktop_role_models", {}).get(role, {})
+        provider = (
+            spec.get("provider")
+            or self.cfg.get("quick_think_provider")
+            or self.cfg.get("llm_provider")
+        )
+        return bool(self.quant and role == "Sentiment Analyst" and provider == "agy_cli")
 
     def count(self, role, field):
         with self.lock:
@@ -96,6 +109,20 @@ class Runtime:
 
     def prompt(self, value, role):
         source = messages(value)
+        if self.quant and role == "Sentiment Analyst":
+            source = [
+                m.model_copy(
+                    update={
+                        "content": m.content.replace(
+                            "News headlines — Yahoo Finance",
+                            "News headlines — Vietcap public company-news feed",
+                        )
+                    }
+                )
+                if isinstance(m.content, str)
+                else m
+                for m in source
+            ]
         words = (
             120
             if role == "Memory Log"
@@ -103,6 +130,9 @@ class Runtime:
             if role in ("Research Manager", "Portfolio Manager")
             else 400
         )
+        spec = self.cfg.get("desktop_role_models", {}).get(role, {})
+        if spec.get("provider") == "deepseek" and self.cfg.get("desktop_budget", {}).get("enabled"):
+            words = 160
         text = f"Write concise evidence-based output, target at most {words} words. Preserve all required schema fields, figures, units, sources and limitations. Do not repeat the full upstream reports. "
         if self.quant and role != "Memory Log":
             from desktop.vietnam import capsule
@@ -115,6 +145,12 @@ class Runtime:
                 self.book, ensure_ascii=False
             )
             text += "\nExecution is simulation-only. Submit no order yourself. A valid rating is still required; Hold is a valid decision when evidence is too thin. Execution Hold is correct when no position can be bought/sold, data is insufficient or constraints cannot be met. Return a concrete Buy/Sell only with valid quantity and VND limit price justified by the given account. All orders need separate human approval."
+        if self.guarded_sentiment(role):
+            from desktop.grounding import ledger
+
+            text += "\nSENTIMENT EVIDENCE LEDGER / REQUIRED CONTEXT READBACK:\n" + json.dumps(
+                ledger(self.quant, source), ensure_ascii=False
+            )
         return [SystemMessage(content=text), *source]
 
     def invoke(self, role, spec, model, value, config, *, schema=None):
@@ -142,6 +178,7 @@ class Runtime:
                     "max_tokens",
                     "openai_reasoning_effort",
                     "google_thinking_level",
+                    "desktop_budget",
                 )
             },
             "schema": schema_name,
@@ -166,16 +203,34 @@ class Runtime:
                     if record["type"] == "message"
                     else record["value"]
                 )
+                result = self._capture(role, result, value=value)
                 self.count(role, "cache_hits")
-                return self._capture(role, result)
+                return result
             except (KeyError, ValueError, TypeError):
                 pass
+        provider = (
+            spec.get("provider")
+            or self.cfg.get("quick_think_provider")
+            or self.cfg.get("llm_provider")
+        )
+        self.paid_budget.reserve(provider)
         self.count(role, "calls")
         cfg = {**config, "metadata": dict(config.get("metadata", {}))}
         cfg["metadata"].update(
             ta_role=role, ta_provider=spec.get("provider"), ta_requested_model=spec.get("model")
         )
         result = model.invoke(value, config=cfg)
+        if (
+            provider == "deepseek"
+            and isinstance(result, AIMessage)
+            and result.response_metadata.get("finish_reason") == "length"
+        ):
+            note = "DeepSeek output reached its configured token cap. This is a partial argument; do not treat omitted evidence as absent. No paid retry was performed."
+            self.emit("warning", {"message": note})
+            result = result.model_copy(
+                update={"content": str(result.content) + "\n\n[" + note + "]"}
+            )
+        result = self._capture(role, result, value=value)
         if self.enabled:
             if isinstance(result, AIMessage):
                 record = {"key": key, "type": "message", "value": result.model_dump(mode="json")}
@@ -184,9 +239,20 @@ class Runtime:
             else:
                 record = {"key": key, "type": "value", "value": result}
             write_json(path, record)
-        return self._capture(role, result)
+        return result
 
-    def _capture(self, role, result):
+    def _capture(self, role, result, value=None):
+        if self.guarded_sentiment(role):
+            from desktop.grounding import GroundedSentimentReport, validate
+
+            if not isinstance(result, GroundedSentimentReport):
+                raise ValueError("Antigravity report has no validated context receipt.")
+            result, receipt = validate(result, self.quant, value or [])
+            self.grounding[role] = receipt
+            self.emit(
+                "grounding",
+                {"role": role, "validated": True, "news_count": receipt["readback"]["news_count"]},
+            )
         if role == "Portfolio Manager" and isinstance(result, ExecutablePortfolioDecision):
             self.decision = result.model_dump(mode="json")
         return result
@@ -236,12 +302,19 @@ class TokenUsage(BaseCallbackHandler):
         with self.lock:
             items = copy.deepcopy(self.items)
         reported = [x for x in items if x["tokens"]]
+        cached = [
+            x["tokens"]["input_token_details"]["cache_read"]
+            for x in reported
+            if isinstance(x["tokens"].get("input_token_details", {}).get("cache_read"), int)
+        ]
         return {
             "requests": len(items),
             "requests_with_token_usage": len(reported),
             "unreported_requests": len(items) - len(reported),
             "reported_input_tokens": sum(x["tokens"].get("input_tokens", 0) for x in reported),
             "reported_output_tokens": sum(x["tokens"].get("output_tokens", 0) for x in reported),
+            "requests_with_cache_counter": len(cached),
+            "reported_cached_input_tokens": sum(cached) if cached else None,
             "items": items,
             "note": "Reported tokens only; unavailable CLI counters are not zero and are not an estimate of plan usage or money.",
         }
