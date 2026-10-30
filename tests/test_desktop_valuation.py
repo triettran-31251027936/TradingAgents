@@ -290,3 +290,31 @@ def test_company_profile_historical_and_wrong_ticker_are_withheld():
     observed = datetime(2026, 3, 2, 10, tzinfo=TZ)
     assert normalize(raw, "HPG", "2026-03-01", observed)["status"] == "withheld"
     assert normalize(raw, "FPT", "2026-03-02", observed)["status"] == "unavailable"
+
+
+def test_bank_capital_caption_requires_shareholder_equity_parent():
+    book, raw = fixture()
+    book["balance"]["fields"]["capital"] = "Capital"
+    book["balance"]["field_metadata"]["capital"] = {"titleEn": "Capital", "parent": "EQUITY"}
+    r, p = calculate(book, raw)
+    assert p["preferred_capital"] == 0 and r["pe_ttm"]["value"] == 10
+    book["balance"]["field_metadata"]["capital"]["parent"] = "DEBT"
+    r, p = calculate(book, raw)
+    assert p["preferred_capital"] is None and r["pe_ttm"]["value"] is None
+
+
+def test_duplicate_balance_does_not_establish_preferred_share_class():
+    book, raw = fixture()
+    row = deepcopy(book["balance"]["quarters"][-1])
+    row["pref_equity"] = 10
+    book["balance"]["quarters"].append(row)
+    r, p = calculate(book, raw)
+    assert p["preferred_capital"] is None and r["pe_ttm"]["value"] is None
+
+
+def test_multiple_valuation_failures_do_not_hide_price_mismatch():
+    book, raw = fixture()
+    raw["data"][0]["marketCap"] = 2000
+    book["balance"]["quarters"][-1]["pref_equity"] = 10
+    _, p = calculate(book, raw)
+    assert "does not match" in p["reason"] and "Preferred share" in p["reason"]

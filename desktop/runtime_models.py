@@ -150,7 +150,7 @@ class Runtime:
                 + capsule(self.quant)
             )
             if self.quant.get("bank_reconciliation"):
-                text += "\nBANK ACCOUNTING: Use bank-specific NII, TOI, signed expenses, gross/net loans, provisions and customer deposits. bank_accounting_loan_deposit_ratio is NOT the SBV regulatory LDR; do not compare it with a regulatory cap. bank_provider_* are current observed provider ratios with unverified denominator/lookback, not independently reconstructed NIM/NPL/CASA. Preserve accounting signs; a negative provider CIR/provision ratio is not negative economic cost. Do not infer CASA, NPL groups, earning assets, risk-weighted assets or CAR from industrial statement fields.\n"
+                text += "\nBANK ACCOUNTING: Metrics marked not_applicable are excluded industrial definitions, not missing bank observations; do not reconstruct them or treat them as zero. Use bank-specific NII, TOI, signed expenses, gross/net loans, provisions and customer deposits. bank_accounting_loan_deposit_ratio is NOT the SBV regulatory LDR; do not compare it with a regulatory cap. bank_provider_* are current observed provider ratios with unverified denominator/lookback, not independently reconstructed NIM/NPL/CASA. Preserve accounting signs; a negative provider CIR/provision ratio is not negative economic cost. Do not infer CASA, NPL groups, earning assets, risk-weighted assets or CAR from industrial statement fields.\n"
             if self.quant.get("domestic_macro"):
                 text += "\nFor Vietnam domestic macro use get_macro_indicators with vn_cpi, vn_cpi_yoy, vn_cpi_mom, vn_nominal_gdp, vn_real_gdp, vn_real_gdp_yoy, vn_iip, vn_iip_yoy, vn_iip_mom, vn_labor_force, vn_employment, vn_unemployment, vn_youth_unemployment, vn_underemployment or vn_nsdp:<INDICATOR>. Bank FX uses vn_fx_usd_cash_buy, vn_fx_usd_transfer_buy, vn_fx_usd_sell or vn_fx:<CURRENCY>. These are Vietcombank reference quotes, not SBV central rates or guaranteed execution prices. Conflicting GDP level observations must not be used to reconstruct growth or choose the last duplicate. Newer official release facts use vn_release_gdp_yoy, vn_release_cpi_yoy, vn_release_cpi_mom, vn_release_unemployment, vn_release_youth_unemployment and vn_release_underemployment. Preserve their exact period and publication dates; a nine-month average is not a monthly or quarterly observation. Existing cpi/unemployment/fed_funds_rate aliases remain FRED/US series, not Vietnamese substitutes. File freshness and working-age versus age-15+ populations differ. Do not multiply NSDP percentage rates by 1000 or call stale files the latest national release.\n"
             if self.quant.get("insider_dealings"):
@@ -283,8 +283,15 @@ class Runtime:
                 "available_metrics": sum(
                     m["value"] is not None for m in self.quant["metrics"].values()
                 ),
+                "not_applicable_metrics": [
+                    k
+                    for k, m in self.quant["metrics"].items()
+                    if m.get("status") == "not_applicable"
+                ],
                 "missing_metrics": [
-                    k for k, m in self.quant["metrics"].items() if m["value"] is None
+                    k
+                    for k, m in self.quant["metrics"].items()
+                    if m["value"] is None and m.get("status") != "not_applicable"
                 ],
                 "model_input_sha256": hashlib.sha256(serialized.encode()).hexdigest(),
                 "input_verified": True,

@@ -94,3 +94,9 @@ Keep the evidence table and its numeric format. Bank labels distinguish customer
 loans before/after allowance, signed expense and provider comparison data. Explicitly
 separate accounting LDR from NHNN regulatory LDR, and TTM CIR from source CIR with
 unknown lookback. An ordinary reconciliation note explains the gross/net check.
+
+
+## Applicable-data coverage
+For banks, show “Không áp dụng cho ngân hàng” for excluded industrial definitions.
+The coverage denominator counts applicable metrics; show the excluded count
+separately. Never turn an excluded definition into zero or hide a real missing input.

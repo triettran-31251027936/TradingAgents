@@ -81,6 +81,12 @@ def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper
                 "quote_date": quant["prices"][-1]["date"],
                 "available": sum(v["value"] is not None for v in quant["metrics"].values()),
                 "total": len(quant["metrics"]),
+                "applicable_total": sum(
+                    m.get("status") != "not_applicable" for m in quant["metrics"].values()
+                ),
+                "not_applicable": sum(
+                    m.get("status") == "not_applicable" for m in quant["metrics"].values()
+                ),
                 "missing": quant["missing"],
             },
         )
@@ -181,7 +187,11 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
         for name, m in q["metrics"].items():
             values = (
                 name,
-                m["value"] if m["value"] is not None else "MISSING",
+                m["value"]
+                if m["value"] is not None
+                else "NOT APPLICABLE"
+                if m.get("status") == "not_applicable"
+                else "MISSING",
                 m["unit"],
                 m["asof"] + (" published:" + m["published"] if m.get("published") else ""),
                 m["formula"] + " / " + m["source"],
@@ -236,7 +246,11 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                     cell(v)
                     for v in (
                         name,
-                        m["value"] if m["value"] is not None else "MISSING",
+                        m["value"]
+                        if m["value"] is not None
+                        else "NOT APPLICABLE"
+                        if m.get("status") == "not_applicable"
+                        else "MISSING",
                         m["unit"],
                         m["formula"],
                     )

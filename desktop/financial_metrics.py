@@ -118,7 +118,10 @@ def extend(book, add, field):
         (
             "operating_cashflow_ttm",
             "cash",
-            ("Net cash inflows/(outflows) from operating activities",),
+            (
+                "Net cash inflows/(outflows) from operating activities",
+                "Net cash from operating activities",
+            ),
         ),
         ("capex_signed_ttm", "cash", ("Purchases of fixed assets and other long term assets",)),
     ]:

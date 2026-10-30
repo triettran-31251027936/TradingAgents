@@ -446,3 +446,16 @@ methodologically unverified. They require a unique current provider row matching
 published income/balance periods; current values are withheld for historical dates.
 No independently reconstructed NIM, regulatory CAR, CASA breakdown or NPL-group
 schedule is claimed without the necessary note denominators and scope.
+
+
+### Bank presentation and capital-scope corrections (v10)
+The CFO caption `Net cash from operating activities` is accepted alongside the
+industrial caption, with the same quarter/FY reconciliation. Bank CFO is not used
+as industrial FCF/cash conversion. Seventeen industrial presentation definitions
+are explicitly `not_applicable` for a bank identified from populated published
+statement fields. They remain visible with reasons and null values, outside the
+missing-data list/applicable denominator; real missing bank/valuation inputs stay
+missing. Preferred-share capital can be found under the banking `Capital` caption
+only when metadata places it beneath shareholder equity. Duplicate balance periods
+cannot establish the preferred class. Every failed price/capital check is retained;
+recognizing zero preferred capital never overrides marketcap/quote disagreement.

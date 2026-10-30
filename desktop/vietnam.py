@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 9
+VERSION = 10
 LOCK = threading.Lock()
 
 
@@ -330,7 +330,10 @@ def compute(
         (
             "cash",
             "operating_cashflow",
-            ("Net cash inflows/(outflows) from operating activities",),
+            (
+                "Net cash inflows/(outflows) from operating activities",
+                "Net cash from operating activities",
+            ),
             "VND",
         ),
         (
@@ -585,7 +588,10 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             asof=asof,
             observed_at=valuation_observed_at,
         )
-        missing = [key for key, value in metrics.items() if value["value"] is None]
+        from desktop.applicability import apply_bank, missing as missing_metrics
+
+        apply_bank(metrics, bank_proof)
+        missing = missing_metrics(metrics)
         from desktop.financial_metrics import reconcile
 
         reconciliation = {
@@ -635,7 +641,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
                     "status": bank_fx["status"],
                 }
             )
-            missing = [key for key, value in metrics.items() if value["value"] is None]
+            missing = missing_metrics(metrics)
             warnings.extend(domestic_macro.get("warnings", []))
             for source in domestic_macro.get("sources", []) + releases.get("sources", []):
                 sources.append(
@@ -664,7 +670,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
                     "warnings": [type(exc).__name__],
                 }
             metrics.update(insider_vietnam.metrics(insider_dealings))
-            missing = [key for key, value in metrics.items() if value["value"] is None]
+            missing = missing_metrics(metrics)
             warnings.extend(insider_dealings.get("warnings", []))
             sources.append(
                 {

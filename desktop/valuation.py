@@ -136,14 +136,29 @@ def extend(book, prices, raw, asof, observed_at, add, field, *, company_profile=
             and abs(profile_price - close) <= max(0.000001, close * 0.00001)
             and issued == shares
         )
-    latest_balance = next((r for r in book["balance"].get("quarters", []) if period(r) == end), {})
+    matching_balances = [r for r in book["balance"].get("quarters", []) if period(r) == end]
+    latest_balance = matching_balances[0] if len(matching_balances) == 1 else {}
     capital_key = field(book, "balance", "Paid-in capital")
+    section = book["balance"]
+    metadata = {k.casefold(): v for k, v in section.get("field_metadata", {}).items()}
+    labels = {k.casefold(): v.strip().casefold() for k, v in section["fields"].items()}
+
+    def capital_parent(code):
+        parent = str(code).casefold()
+        if capital_key and parent == capital_key.casefold():
+            return True
+        # Banking capital has a different caption/code, but must be a child of
+        # shareholder equity. A similarly named liability is not common equity.
+        record = metadata.get(parent, {})
+        grand = str(record.get("parent", "")).casefold()
+        return labels.get(parent) == "capital" and labels.get(grand) == "owner's equity"
+
     preferred_fields = [
         key
-        for key, description in book["balance"].get("field_metadata", {}).items()
-        if description.get("titleEn", "").strip().lower() == "preferred shares"
-        and capital_key
-        and str(description.get("parent", "")).lower() == capital_key.lower()
+        for key, description in section.get("field_metadata", {}).items()
+        if description.get("titleEn", "").strip().casefold() == "preferred shares"
+        and capital_parent(description.get("parent"))
+        and latest_balance.get(key) is not None
     ]
     preferred = (
         number(latest_balance.get(preferred_fields[0])) if len(preferred_fields) == 1 else None
@@ -151,7 +166,8 @@ def extend(book, prices, raw, asof, observed_at, add, field, *, company_profile=
     if market and not aligned:
         reason = "Market cap / stated shares does not match the canonical completed close; do not mix price bases"
     if market and preferred != 0:
-        reason = "Preferred share capital is non-zero or unknown; common-equity valuation withheld"
+        note = "Preferred share capital is non-zero or unknown; common-equity valuation withheld"
+        reason = reason + "; " + note if not aligned else note
     market_verified = bool(market and aligned)
     verified = bool(market_verified and preferred == 0)
     proof.update(
@@ -161,6 +177,7 @@ def extend(book, prices, raw, asof, observed_at, add, field, *, company_profile=
         statement_ttm_end=list(end) if end else None,
         marketcap_price_aligned=aligned,
         preferred_capital=preferred,
+        preferred_field=preferred_fields[0] if len(preferred_fields) == 1 else None,
         status="verified_current_inputs"
         if verified
         else "market_verified_valuation_withheld"
