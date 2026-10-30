@@ -32,7 +32,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Local desktop paper account; no live broker transport.
-desktop = ["backtrader==1.9.78.123", "numpy>=2.0"]
+desktop = ["backtrader==1.9.78.123", "numpy>=2.0", "beautifulsoup4>=4.12"]
 dev = [
     "ruff>=0.16",
     "pytest>=8.0",
