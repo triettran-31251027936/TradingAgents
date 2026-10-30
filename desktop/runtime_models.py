@@ -142,6 +142,16 @@ class Runtime:
         ):
             words = min(words, 160)
         text = f"Write concise evidence-based output, target at most {words} words. Preserve all required schema fields, figures, units, sources and limitations. Do not repeat the full upstream reports. "
+        if role == "Memory Log":
+            text += (
+                "\nOUTCOME GRADING: Buy/Overweight claims positive alpha; Sell/Underweight claims negative alpha. "
+                "Hold claims NO direction and has no directional hit rate: never call a Hold or an abstention correct, incorrect, wrong-footed, a directional success or a directional failure based on stock alpha. "
+                "Raw stock return and stock-minus-benchmark alpha are NOT account P&L, cash return, an executed trade, or profit earned by holding cash. "
+                "A short price window cannot establish valuation, credit quality or the causal correctness of a thesis. "
+                "Preserve an explicitly synthetic decision's test status; never describe it as an actual past investment or trade.\n"
+            )
+            if self.cfg.get("output_language"):
+                text += f"Write the reflection in {self.cfg['output_language']}; preserve numeric signs, units and benchmark names.\n"
         if self.quant and role != "Memory Log":
             from desktop.vietnam import capsule
 

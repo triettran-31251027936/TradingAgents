@@ -313,6 +313,8 @@ def backtest_scope(cfg, emit):
 
     class Graph(original):
         def __init__(self, *args, **kwargs):
+            from uuid import uuid4
+
             from desktop.budget import backtest_config
 
             if "config" in kwargs:
@@ -320,6 +322,23 @@ def backtest_scope(cfg, emit):
             super().__init__(*args, **kwargs)
             self._desktop_base_config = copy.deepcopy(self.config)
             self._desktop_identity = self.resolve_instrument_context
+            # A resumed sweep may skip every cell and still settle old entries.
+            # Configure Memory before any propagate(), including its paid cap.
+            self._desktop_counter = TokenUsage()
+            self._desktop_runtime = (
+                Runtime(self.config)
+                if self.config.get("desktop_usage", {}).get("enabled")
+                or self.config.get("desktop_budget", {}).get("enabled")
+                else None
+            )
+            self._desktop_settlements = []
+            self._desktop_settlement_pass = uuid4().hex
+            apply_role_models(
+                self,
+                self.config.get("desktop_role_models", {}),
+                [self._desktop_counter],
+                runtime=self._desktop_runtime,
+            )
 
         def propagate(self, ticker, asof, asset_type="stock", portfolio=None):
             self.config = copy.deepcopy(self._desktop_base_config)
@@ -330,6 +349,7 @@ def backtest_scope(cfg, emit):
             quant, runtime, portfolio, _ = prepare(
                 self, ticker, asof, portfolio, self.config, callbacks, emit
             )
+            self._desktop_counter, self._desktop_runtime = counter, runtime
             from tradingagents.dataflows.config import run_config
 
             with vietnam.vendor_scope(quant), run_config(self.config):
@@ -342,6 +362,27 @@ def backtest_scope(cfg, emit):
             )
             folder.mkdir(parents=True, exist_ok=True)
             artifacts(folder, quant, runtime, counter, None, "backtest/" + ticker + "/" + asof)
+            return result
+
+        def settle_pending(self, ticker):
+            from dataclasses import asdict
+
+            result = super().settle_pending(ticker)
+            self._desktop_settlements.append({"ticker": ticker, **asdict(result)})
+            runtime = self._desktop_runtime
+            payload = {
+                "pass_id": self._desktop_settlement_pass,
+                "scope": "Current model counter includes the last cell plus final settlement; settlement only if all cells were skipped. Complements per-cell usage files, do not sum them twice.",
+                "settlements": self._desktop_settlements,
+                "usage": self._desktop_counter.summary(),
+                "roles": runtime.stats if runtime else {},
+                "paid_budget": runtime.paid_budget.summary() if runtime else None,
+            }
+            folder = Path(self.config["results_dir"]) / "evidence"
+            vietnam.write_json(folder / "memory-settlement.json", payload)
+            vietnam.write_json(
+                folder / "settlement" / (self._desktop_settlement_pass + ".json"), payload
+            )
             return result
 
     backtest.TradingAgentsGraph = Graph

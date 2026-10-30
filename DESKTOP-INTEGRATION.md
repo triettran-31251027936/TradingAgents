@@ -547,3 +547,38 @@ and observations older than 62 days. Historical runs use only snapshots actually
 observed by their analysis date; downloading a dated old article today cannot
 silently create a historical vintage. No numeric policy rates are inferred from
 a statement that rates were unchanged. The former NSDP GDP/valuation gaps remain.
+
+## Resumed backtest Memory routing and settlement receipts
+
+A sweep whose cells were all already logged used to skip `prepare()` entirely;
+its final settlement could therefore reflect with the base quick model rather
+than the assigned Memory provider, without the desktop paid-request guard.
+The desktop wrapper now installs role routing, usage and the configured guard
+before any cell runs. With usage/budget explicitly disabled it preserves that
+choice. The original grid, skip/resume, scoring and Memory modules are unchanged.
+
+The final pass writes `evidence/memory-settlement.json` and a receipt under
+`evidence/settlement/<pass-id>.json`. The counter includes the last cell plus
+final settlement, or settlement only when every cell was skipped; it complements
+per-cell receipts and must not be summed with them twice. On a normal sweep the
+last cell's remaining paid budget is shared with final reflection. A new explicit
+resume starts a new bounded pass and retains prior pass receipts.
+
+Regression coverage runs the actual upstream resume loop: two cells are skipped,
+the assigned Memory provider settles one entry, a one-request cap keeps the other
+pending, and an explicit second resume settles that entry without duplicating
+the first. Lessons remain unavailable before their resolution date.
+
+An isolated live acceptance used an explicitly synthetic Hold decision dated
+2026-10-15, real VCB/VNINDEX closes, the original five-session outcome calculation
+and one actual DeepSeek reflection per probe. The outcome resolved on 2026-10-23;
+there were zero new analysis cells and zero orders. This verifies transport,
+price settlement, resume and time filtering, not a real historical trading record.
+
+Review caught the first reflection grading abstention as directionally wrong.
+The desktop Memory prompt now follows upstream scoring semantics: Hold claims no
+direction and has no directional hit rate; stock returns and alpha are not account
+P&L, and five price sessions cannot establish valuation or credit quality. A second
+live sample respected these distinctions. A final sample also verified forwarding
+the configured Vietnamese output language while preserving the synthetic label.
+These are bounded acceptance samples, not a general guarantee of LLM reasoning.
