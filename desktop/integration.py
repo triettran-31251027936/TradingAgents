@@ -113,6 +113,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "sources": quant["sources"],
             "financial_reconciliation": quant.get("financial_reconciliation", {}),
             "valuation_reconciliation": quant.get("valuation_reconciliation", {}),
+            "bank_reconciliation": quant.get("bank_reconciliation", {}),
         }
     if runtime:
         result["grounding"] = runtime.grounding
@@ -174,6 +175,8 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                 + ". Source: Vietcap company/details. Current observation, not a historical profile archive.\n\n"
             )
 
+        if q.get("bank_reconciliation"):
+            text += "\n### Chỉ tiêu ngân hàng\n\nTỷ số kế toán dư nợ/tiền gửi không phải LDR theo quy định NHNN. Tỷ số provider được giữ riêng, có thể mang dấu chi phí/dự phòng âm; phương pháp và cửa sổ tính chưa được đối soát từ thuyết minh. TTM tự tính chỉ dùng các quý liên tiếp đã đối chiếu với báo cáo năm.\n\n"
         text += "| Metric | Value | Unit | As of | Formula / source |\n|---|---:|---|---|---|\n"
         for name, m in q["metrics"].items():
             values = (

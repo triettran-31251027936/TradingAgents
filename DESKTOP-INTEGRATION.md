@@ -429,3 +429,20 @@ The original sentiment node, StockTwits and Reddit remain separate. Antigravity
 must read back every supplied F247 ID and source status; claims cannot reference
 unseen IDs. Sparse/missing data requires low confidence. These checks verify source
 identity and transport, not semantic truth or representative investor sentiment.
+
+
+### Bank-specific arithmetic (v9)
+Bank identification requires populated net-interest-income and customer-deposit
+statement fields, rather than applying a current sector label to historical accounts.
+26 additional banking metrics include gross/net customer loans, signed allowance,
+customer deposits, interbank placements, SBV balances, issued papers, reconciled
+TTM income/expense/provision flows, accounting loan/deposit, loan-allowance ratio,
+TTM CIR and noninterest income. Gross plus non-positive allowance must equal net
+loans within max(1 VND, 1e-9 gross). Duplicate flow periods or ambiguous quarter/FY
+representation withhold TTM instead of choosing/summing rows. Accounting LDR is
+not the SBV regulatory definition. Seven provider ratios (NIM, CASA, NPL and
+comparison ratios) remain separately labelled provider_observed, signed and
+methodologically unverified. They require a unique current provider row matching
+published income/balance periods; current values are withheld for historical dates.
+No independently reconstructed NIM, regulatory CAR, CASA breakdown or NPL-group
+schedule is claimed without the necessary note denominators and scope.

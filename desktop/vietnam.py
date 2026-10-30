@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 8
+VERSION = 9
 LOCK = threading.Lock()
 
 
@@ -562,6 +562,30 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             valuation_proof=valuation_proof,
             company_profile=company_profile,
         )
+        from desktop.bank_metrics import extend as extend_bank
+
+        def bank_add(name, value, unit, formula, source, stamp):
+            metrics[name] = {
+                "value": value,
+                "unit": unit,
+                "formula": formula,
+                "source": source,
+                "asof": stamp,
+                "status": "provider_observed"
+                if value is not None and name.startswith("bank_provider_")
+                else "available"
+                if value is not None
+                else "missing",
+            }
+
+        bank_proof = extend_bank(
+            book,
+            bank_add,
+            valuation_raw=valuation_raw,
+            asof=asof,
+            observed_at=valuation_observed_at,
+        )
+        missing = [key for key, value in metrics.items() if value["value"] is None]
         from desktop.financial_metrics import reconcile
 
         reconciliation = {
@@ -715,6 +739,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             "company_profile": company_profile,
             "valuation_observed_at": valuation_observed_at,
             "valuation_reconciliation": valuation_proof,
+            "bank_reconciliation": bank_proof,
             "missing": missing,
             "warnings": warnings,
             "news": news,
@@ -747,6 +772,7 @@ def capsule(bundle):
                 "analysis_date",
                 "currency",
                 "provider",
+                "bank_reconciliation",
                 "metrics",
                 "missing",
                 "warnings",

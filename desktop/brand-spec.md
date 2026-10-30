@@ -87,3 +87,10 @@ Use an ordinary labelled disclosure under the evidence notes, preserving navigat
 colour and typography. Every retained topic has a safe source link, RSS date,
 relevance warning, context-inclusion status and labelled excerpt. Explain missing
 coverage without presenting a neutral score or artificial bullish/bearish chart.
+
+
+## Bank evidence labels
+Keep the evidence table and its numeric format. Bank labels distinguish customer
+loans before/after allowance, signed expense and provider comparison data. Explicitly
+separate accounting LDR from NHNN regulatory LDR, and TTM CIR from source CIR with
+unknown lookback. An ordinary reconciliation note explains the gross/net check.
