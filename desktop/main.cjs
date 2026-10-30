@@ -5,6 +5,11 @@ let approving=false;
 const path=require('node:path');
 const {spawn,execFile}=require('node:child_process');
 const manifest=JSON.parse(fs.readFileSync(path.join(process.resourcesPath,'trading-desktop.json'),'utf8'));
+// Start the real interpreter without venv discovery, then load this venv's site packages explicitly.
+// macOS can stall reading pyvenv.cfg through a Documents-resident executable symlink.
+const pythonReal=manifest.pythonExecutable||manifest.python;
+const pythonSite=manifest.pythonSitePackages||null;
+const bootstrapPython='import sys,site,runpy; site.addsitedir(sys.argv[1]); runpy.run_path(sys.argv[2],run_name="__main__")';
 app.setName('Trading Agents');
 const desktopUserData=path.join(manifest.repo,'work','desktop-userdata');
 fs.mkdirSync(desktopUserData,{recursive:true});app.setPath('userData',desktopUserData);
@@ -31,8 +36,8 @@ function bridge(action,payload={},long=false,approvalKey=null){
   for(const key of ['TRADINGAGENTS_PAPER_APPROVAL_KEY','PYTHONHOME','PYTHONPATH','PYTHONEXECUTABLE','__PYVENV_LAUNCHER__','PYTHONSTARTUP'])delete childEnv[key];
   childEnv.PYTHONDONTWRITEBYTECODE='1';
   if(approvalKey)childEnv.TRADINGAGENTS_PAPER_APPROVAL_KEY=approvalKey;
-  const child=spawn(manifest.python,[path.join(manifest.repo,'desktop','bridge.py')],{
-   cwd:manifest.repo,env:childEnv,
+  const child=spawn(pythonReal,pythonSite?['-S','-c',bootstrapPython,pythonSite,path.join(manifest.repo,'desktop','bridge.py')]:[path.join(manifest.repo,'desktop','bridge.py')],{
+   cwd:process.resourcesPath,env:childEnv,
    stdio:['pipe','pipe','pipe'],detached:true
   });
   bridgeChildren.add(child);

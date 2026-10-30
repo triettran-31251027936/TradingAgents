@@ -4,11 +4,14 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),vm=r
 const {EventEmitter}=require('node:events');const {PassThrough}=require('node:stream');
 const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'ta-main-contract-'));
 const actual=path.resolve(__dirname,'../desktop');
-fs.writeFileSync(path.join(tmp,'trading-desktop.json'),JSON.stringify({repo:tmp,python:'/fake/python'}));
+const fakePython=path.join(tmp,'.venv/bin/python');fs.mkdirSync(path.dirname(fakePython),{recursive:true});fs.writeFileSync(fakePython,'');fs.mkdirSync(path.join(tmp,'.venv/lib/python3.12/site-packages'),{recursive:true});
+fs.writeFileSync(path.join(tmp,'trading-desktop.json'),JSON.stringify({repo:tmp,python:fakePython,pythonExecutable:fakePython,pythonSitePackages:path.join(tmp,'.venv/lib/python3.12/site-packages')}));
 const hooks={},requests=[];let response=0,win,pid=1000;
 const preview={id:'virtual-test-order',preview_hash:'test-preview',status:'PROPOSED',notional:5000000,estimated_fee:7500,available_cash:100000000,order:{ticker:'FPT.VN',quantity:100,side:'Buy',limit_price:50000,exchange:'HOSE',asof:'2026-10-29',analysis_date:'2026-10-30',rationale:'Isolated test only',data_gaps:[]}};
 const meta={version:'test',config:{},history:[],providers:[]};
 function spawn(_file,_args,options){
+ assert.equal(options.cwd,tmp,'bridge cwd must avoid Documents getcwd stalls');
+ assert.equal(_args[0],'-S');assert.equal(_args[1],'-c');assert.ok(_args[3].endsWith('site-packages'));assert.ok(_args[2].includes('site.addsitedir'));
  const child=new EventEmitter();child.pid=pid++;child.stdout=new PassThrough();child.stderr=new PassThrough();
  child.stdin={on(){},end(data){const request=JSON.parse(data);requests.push({...request,env:options.env});queueMicrotask(()=>{let payload={ok:true};if(request.action==='meta')payload=meta;if(request.action==='paper_preview')payload=preview;if(request.action==='paper_approve')payload={status:'APPROVED'};child.stdout.write(JSON.stringify({type:'result',payload})+'\n');child.emit('close',0);});}};
  return child;

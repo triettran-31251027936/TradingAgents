@@ -201,3 +201,25 @@ not a trade recommendation, portfolio VaR or a forecast. Runtime sidecars
 record each role's supplied snapshot, metric coverage and input hash. A role
 with a missing canonical capsule cannot be marked complete. The receipt proves
 input delivery, not the correctness of every output assertion.
+
+## macOS app runtime location
+
+The app now stages its code, venv dependencies and mutable runtime under
+`~/Library/Application Support/Trading Agents/engine`. The checkout remains
+the development/source copy. Initial installation copies settings, local .env,
+reports, memory and virtual-account data intact; it does not delete the originals.
+Later app deployments refresh code only and preserve runtime user settings,
+keys, reports and account state. The manifest records both sourceRepo and repo.
+
+The actual Python executable and site-packages path are resolved at build time.
+The bridge starts from application Resources with `-S`, then explicitly loads
+the staged environment. It does not discover the Documents-resident venv or
+use Documents as cwd. This addresses observed macOS stalls in pyvenv.cfg
+opening, getcwd and directory scans. The shell still waits for fresh engine
+metadata before enabling mutating operations.
+
+The original source .env and config remain private migration backups; changing
+keys/settings in the installed app now updates the Application Support runtime.
+Source validation scripts run against their own checkout and do not overwrite
+this runtime state. Report paths displayed in the installed app refer to the
+staged runtime.

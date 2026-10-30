@@ -81,9 +81,12 @@ def main():
     packed, digest = archive_files(files)
     (resources / "app.asar").write_bytes(packed)
     shutil.copy2(args.icon, resources / "trading-agents.icns")
-    (resources / "trading-desktop.json").write_text(
-        json.dumps({"repo": str(ROOT), "python": str(ROOT / ".venv/bin/python")})
-    )
+    if __package__:
+        from desktop.install_engine import install
+    else:
+        from install_engine import install
+
+    (resources / "trading-desktop.json").write_text(json.dumps(install(ROOT)))
     plist_path = args.output / "Contents/Info.plist"
     plist = plistlib.loads(plist_path.read_bytes())
     old = plist["CFBundleExecutable"]
