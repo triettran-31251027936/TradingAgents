@@ -4,6 +4,7 @@ Only account status and the authorize URL cross the desktop bridge. Tokens stay
 under the original auth module's ownership. A private, short-lived mailbox lets
 another bridge process deliver a pasted loopback callback to ``sign_in``.
 """
+
 from __future__ import annotations
 
 import json
@@ -42,8 +43,9 @@ def logout() -> dict:
 
 def list_models() -> dict:
     """Ask the plan for its own available models using the upstream client."""
-    return {"models": [{"label": label, "id": model}
-                       for label, model in chatgpt_auth.list_models()]}
+    return {
+        "models": [{"label": label, "id": model} for label, model in chatgpt_auth.list_models()]
+    }
 
 
 def _private_json(path: Path, value: dict) -> None:
@@ -76,25 +78,35 @@ def submit_redirect(attempt_id: str, url: str, *, runtime: Path = RUNTIME) -> di
         parsed = urlparse(url.strip())
         redirect = urlparse(expected["redirect_uri"])
         params = parse_qs(parsed.query)
-        valid = (time.time() < expected["expires_at"]
-                 and parsed.scheme == redirect.scheme == "http"
-                 and parsed.hostname == redirect.hostname == "127.0.0.1"
-                 and parsed.port == redirect.port
-                 and parsed.path == redirect.path == chatgpt_auth.CALLBACK_PATH
-                 and parsed.username is None and parsed.password is None
-                 and not parsed.fragment
-                 and params.get("state") == [expected["state"]]
-                 and bool(params.get("code") or params.get("error")))
+        valid = (
+            time.time() < expected["expires_at"]
+            and parsed.scheme == redirect.scheme == "http"
+            and parsed.hostname == redirect.hostname == "127.0.0.1"
+            and parsed.port == redirect.port
+            and parsed.path == redirect.path == chatgpt_auth.CALLBACK_PATH
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.fragment
+            and params.get("state") == [expected["state"]]
+            and bool(params.get("code") or params.get("error"))
+        )
     except (OSError, ValueError, TypeError, KeyError):
         valid = False
     if not valid:
-        raise ValueError("That address does not match the active ChatGPT sign-in. Paste the full callback address.")
+        raise ValueError(
+            "That address does not match the active ChatGPT sign-in. Paste the full callback address."
+        )
     _private_json(attempt / "redirect.json", {"url": url.strip()})
     return {"accepted": True, "attempt_id": attempt_id}
 
 
-def login(emit: Emit, *, timeout: float = 600, runtime: Path = RUNTIME,
-          port: int = chatgpt_auth.DEFAULT_PORT) -> dict:
+def login(
+    emit: Emit,
+    *,
+    timeout: float = 600,
+    runtime: Path = RUNTIME,
+    port: int = chatgpt_auth.DEFAULT_PORT,
+) -> dict:
     """Run upstream login with native loopback and desktop paste fallback.
 
     Emitted events are ``subscription_pending``, ``subscription_url``,
@@ -114,10 +126,14 @@ def login(emit: Emit, *, timeout: float = 600, runtime: Path = RUNTIME,
     def say(message: str) -> None:
         if message.startswith(chatgpt_auth.AUTHORIZE_URL + "?"):
             query = parse_qs(urlparse(message).query)
-            _private_json(attempt / "pending.json", {
-                "state": query["state"][0], "redirect_uri": query["redirect_uri"][0],
-                "expires_at": time.time() + timeout,
-            })
+            _private_json(
+                attempt / "pending.json",
+                {
+                    "state": query["state"][0],
+                    "redirect_uri": query["redirect_uri"][0],
+                    "expires_at": time.time() + timeout,
+                },
+            )
             emit("subscription_url", {"attempt_id": attempt_id, "url": message})
         else:
             # Upstream's say() only prints human instructions; the callback URL

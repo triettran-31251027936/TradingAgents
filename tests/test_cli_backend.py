@@ -15,7 +15,9 @@ from tradingagents.llm_clients.factory import create_llm_client, create_tier_cli
 @pytest.fixture
 def cli_model(tmp_path, monkeypatch):
     executable = tmp_path / "fake-cli"
-    executable.write_text(f"#!{sys.executable}\n" + '''
+    executable.write_text(
+        f"#!{sys.executable}\n"
+        + """
 import json, os, pathlib, sys, time
 args = sys.argv[1:]
 prompt = next((a.split("=", 1)[1] for a in args if a.startswith("--print=")), None)
@@ -43,11 +45,17 @@ if os.environ.get("TEST_NO_COMPLETION"):
     events = []
 for event in events:
     print(json.dumps(event))
-''', encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
     executable.chmod(0o700)
     monkeypatch.setenv("TEST_CAPTURE", str(tmp_path / "prompt.txt"))
-    return CLIChatModel(provider="codex_cli", executable=str(executable),
-                        runtime_dir=str(tmp_path / "runtime"), timeout=5)
+    return CLIChatModel(
+        provider="codex_cli",
+        executable=str(executable),
+        runtime_dir=str(tmp_path / "runtime"),
+        timeout=5,
+    )
 
 
 @tool
@@ -59,16 +67,25 @@ def quote(symbol: str) -> str:
 @pytest.mark.parametrize("provider", ["codex_cli", "agy_cli"])
 def test_real_subprocess_io_and_tool_result_roundtrip(cli_model, monkeypatch, tmp_path, provider):
     cli_model = cli_model.model_copy(update={"provider": provider})
-    monkeypatch.setenv("TEST_ANSWER", json.dumps({"content": "", "tool_calls": [
-        {"name": "quote", "arguments": '{"symbol":"FPT"}'}]}))
+    monkeypatch.setenv(
+        "TEST_ANSWER",
+        json.dumps(
+            {"content": "", "tool_calls": [{"name": "quote", "arguments": '{"symbol":"FPT"}'}]}
+        ),
+    )
     bound = cli_model.bind_tools([quote])
     first = bound.invoke([HumanMessage(content="Analyze FPT")])
     call = first.tool_calls[0]
     assert call["name"] == "quote" and call["args"] == {"symbol": "FPT"}
     result = quote.invoke(call["args"])
     monkeypatch.setenv("TEST_ANSWER", '{"content":"FPT quote is 100","tool_calls":[]}')
-    final = bound.invoke([HumanMessage(content="Analyze FPT"), first,
-                          ToolMessage(content=result, name="quote", tool_call_id=call["id"])])
+    final = bound.invoke(
+        [
+            HumanMessage(content="Analyze FPT"),
+            first,
+            ToolMessage(content=result, name="quote", tool_call_id=call["id"]),
+        ]
+    )
     assert final.content == "FPT quote is 100" and not final.tool_calls
     sent = (tmp_path / "prompt.txt").read_text()
     assert "FPT: 100" in sent and call["id"] in sent
@@ -96,11 +113,14 @@ def test_schema_conversion_keeps_nullability_without_mutating_original():
     assert original["properties"]["price"]["default"] is None
 
 
-@pytest.mark.parametrize("payload", [
-    {"content": "", "tool_calls": [{"name": "delete_files", "arguments": "{}"}]},
-    {"content": "", "tool_calls": [{"name": "quote", "arguments": "[]"}]},
-    {"content": 3, "tool_calls": []},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"content": "", "tool_calls": [{"name": "delete_files", "arguments": "{}"}]},
+        {"content": "", "tool_calls": [{"name": "quote", "arguments": "[]"}]},
+        {"content": 3, "tool_calls": []},
+    ],
+)
 def test_invalid_output_is_refused(cli_model, monkeypatch, payload):
     monkeypatch.setenv("TEST_ANSWER", json.dumps(payload))
     with pytest.raises(ValueError):
@@ -116,7 +136,9 @@ def test_native_tool_usage_is_refused(cli_model, monkeypatch, provider):
 
 def test_agy_schema_finish_is_not_an_external_tool(cli_model, monkeypatch):
     monkeypatch.setenv("TEST_FINISH", "1")
-    assert cli_model.model_copy(update={"provider": "agy_cli"}).invoke("Analyze").content == "report"
+    assert (
+        cli_model.model_copy(update={"provider": "agy_cli"}).invoke("Analyze").content == "report"
+    )
 
 
 def test_agy_refuses_long_history_without_truncation(cli_model):
@@ -147,17 +169,26 @@ def test_factory_and_split_tiers_use_cli_without_api_keys(cli_model, monkeypatch
     monkeypatch.setenv("TRADINGAGENTS_AGY_BIN", cli_model.executable)
     for provider in ("codex_cli", "agy_cli"):
         assert create_llm_client(provider, "default").get_llm().provider == provider
-    config = {"llm_provider": "codex_cli", "quick_think_llm": "default",
-              "deep_think_provider": "agy_cli", "deep_think_llm": "default"}
+    config = {
+        "llm_provider": "codex_cli",
+        "quick_think_llm": "default",
+        "deep_think_provider": "agy_cli",
+        "deep_think_llm": "default",
+    }
     assert create_tier_client(config, "quick").get_llm().provider == "codex_cli"
     assert create_tier_client(config, "deep").get_llm().provider == "agy_cli"
 
 
-@pytest.mark.parametrize(("message", "expected"), [
-    ("You have hit your usage limit. private-key-do-not-display", "usage limit reached"),
-    ("Unauthorized: private-key-do-not-display", "sign-in required"),
-])
-def test_known_cli_errors_are_actionable_without_echoing_provider_secrets(cli_model, monkeypatch, message, expected):
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("You have hit your usage limit. private-key-do-not-display", "usage limit reached"),
+        ("Unauthorized: private-key-do-not-display", "sign-in required"),
+    ],
+)
+def test_known_cli_errors_are_actionable_without_echoing_provider_secrets(
+    cli_model, monkeypatch, message, expected
+):
     monkeypatch.setenv("TEST_EXIT", "1")
     monkeypatch.setenv("TEST_ERROR_MESSAGE", message)
     with pytest.raises(RuntimeError, match=expected) as error:
@@ -167,13 +198,18 @@ def test_known_cli_errors_are_actionable_without_echoing_provider_secrets(cli_mo
 
 def test_stateless_cli_requests_can_run_in_parallel_with_a_bound(tmp_path):
     import concurrent.futures
-    executable = tmp_path/'parallel-cli'
-    capture = tmp_path/'captures'
+
+    executable = tmp_path / "parallel-cli"
+    capture = tmp_path / "captures"
     capture.mkdir()
-    executable.write_text(f'#!{sys.executable}\n' + '''
+    executable.write_text(
+        f"#!{sys.executable}\n"
+        + """
 import json, os, pathlib, sys, time
 args=sys.argv[1:]; prompt=sys.stdin.read(); start=time.monotonic()
-folder=pathlib.Path('''+repr(str(capture))+''')
+folder=pathlib.Path("""
+        + repr(str(capture))
+        + """)
 (folder/(str(os.getpid())+'.start')).write_text('started')
 deadline=time.monotonic()+3
 while len(list(folder.glob('*.start')))<2 and time.monotonic()<deadline:time.sleep(.02)
@@ -181,18 +217,35 @@ time.sleep(.15)
 pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps({'content':'ok','tool_calls':[]}))
 (folder/(str(os.getpid())+'.json')).write_text(json.dumps({'start':start,'end':time.monotonic(),'cwd':str(pathlib.Path.cwd()),'prompt':prompt}))
 print(json.dumps({'type':'turn.completed'}))
-''')
+"""
+    )
     executable.chmod(0o700)
-    model = CLIChatModel(provider='codex_cli',executable=str(executable),runtime_dir=str(tmp_path/'runtime'),max_concurrency=2,timeout=10)
+    model = CLIChatModel(
+        provider="codex_cli",
+        executable=str(executable),
+        runtime_dir=str(tmp_path / "runtime"),
+        max_concurrency=2,
+        timeout=10,
+    )
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-        answers=list(executor.map(lambda i:model.invoke(f'private job {i}').content,range(4)))
-    assert answers == ['ok']*4
-    rows=[json.loads(p.read_text()) for p in capture.glob('*.json')]
-    assert len({r['cwd'] for r in rows}) == 4
-    intervals=sorted([(r['start'],1) for r in rows]+[(r['end'],-1) for r in rows])
-    count=peak=0
-    for _,change in intervals:
+        answers = list(executor.map(lambda i: model.invoke(f"private job {i}").content, range(4)))
+    assert answers == ["ok"] * 4
+    rows = [json.loads(p.read_text()) for p in capture.glob("*.json")]
+    assert len({r["cwd"] for r in rows}) == 4
+    intervals = sorted([(r["start"], 1) for r in rows] + [(r["end"], -1) for r in rows])
+    count = peak = 0
+    for _, change in intervals:
         count += change
         peak = max(peak, count)
     assert peak == 2
-    assert all(not __import__('pathlib').Path(r['cwd']).exists() for r in rows)
+    assert all(not __import__("pathlib").Path(r["cwd"]).exists() for r in rows)
+
+
+def test_codex_native_reasoning_effort_is_explicit(cli_model, tmp_path):
+    model = cli_model.model_copy(
+        update={"cli_reasoning_effort": "high", "model_name": "gpt-6.1-sol"}
+    )
+    command = model._command(tmp_path, tmp_path / "schema.json")
+    assert command[command.index("--config") + 1] == 'model_reasoning_effort="high"'
+    assert command[command.index("--model") + 1] == "gpt-6.1-sol"
+    assert command[-1] == "-"

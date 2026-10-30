@@ -37,7 +37,10 @@
 
 This fork adds **Codex CLI and Antigravity (`agy`) CLI backends** while retaining
 the upstream workflow. See [AGENTSROOM.md](AGENTSROOM.md) for setup in AgentsRoom,
-verification scope, and the separate work needed for Vietnam market data.
+verification scope, and CLI setup. The dedicated desktop now composes the original
+graph with VN market-data adapters, role-specific models and a consent-gated
+Backtrader virtual account. See [DESKTOP-INTEGRATION.md](DESKTOP-INTEGRATION.md)
+for installation, data limitations and verification evidence.
 
 ## News
 

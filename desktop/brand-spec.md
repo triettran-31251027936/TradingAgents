@@ -41,14 +41,11 @@ original quick/deep configuration. Navigation anchors reduce settings hunting.
 Each routed role displays its provider in the workflow. Readable report
 typography and tables remain the primary result surface.
 
-## Final council extension
+## Evidence and virtual execution extension
 
-Mode: Extension. Preserve navigation, palette, typography, original 13-role
-workflow and document viewer. Add a seventh workflow group and one Settings
-panel for the explicitly requested three-provider final review. The council's
-members and final report are clickable documents. The report library exposes a
-resume action only when an actual evidence request exists. Pending, ingesting,
-discussing, failed and completed-with-concerns states use real process events.
-Evidence is never fabricated to fill an empty council card. Existing role badges
-read saved execution metadata when viewing history, rather than current settings.
-Dials remain variance 3, motion 2, density 7, asset dependence 3, brand fidelity 10.
+Mode: Extension. Retain navigation, existing logo, navy/mint tokens, Avenir Next,
+role selection and report reader. Add two trading-only pages: Dữ liệu & quyết định
+and Danh mục tiền ảo. Use source-backed numeric tables, no decorative charts.
+Show empty/missing/blocked/proposed/approved/filled states. The primary order
+button opens a native consent dialog; cancellation is the default. No final
+council group. Retain all original graph roles and advanced configuration.

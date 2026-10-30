@@ -1,5 +1,7 @@
 const {app,BrowserWindow,ipcMain,dialog,shell,nativeTheme,Menu,clipboard}=require('electron');
 const fs=require('node:fs');
+const crypto=require('node:crypto');
+let approving=false;
 const path=require('node:path');
 const {spawn,execFile}=require('node:child_process');
 const manifest=JSON.parse(fs.readFileSync(path.join(process.resourcesPath,'trading-desktop.json'),'utf8'));
@@ -7,13 +9,16 @@ app.setName('Trading Agents');
 const desktopUserData=path.join(manifest.repo,'work','desktop-userdata');
 fs.mkdirSync(desktopUserData,{recursive:true});app.setPath('userData',desktopUserData);
 let window,active=null,quitting=false;
-const quickActions=new Set(['meta','history','report','memory','save_config','doctor','subscription_status','subscription_redirect','subscription_logout','subscription_models','api_key_status','save_api_key','remove_api_key']);
-const jobActions=new Set(['analyze','backtest','settle','subscription_login','test_provider','review_council']);
+const quickActions=new Set(['meta','history','report','memory','save_config','doctor','subscription_status','subscription_redirect','subscription_logout','subscription_models','api_key_status','save_api_key','remove_api_key','paper_snapshot','paper_preview']);
+const jobActions=new Set(['analyze','backtest','settle','subscription_login','test_provider','paper_advance']);
 function send(type,payload){if(window&&!window.isDestroyed())window.webContents.send('ta:event',{type,payload});}
-function bridge(action,payload={},long=false){
+function bridge(action,payload={},long=false,approvalKey=null){
  return new Promise((resolve,reject)=>{
+  const childEnv={...process.env,PYTHONUNBUFFERED:'1',PATH:[path.join(app.getPath('home'),'.local','bin'),'/opt/homebrew/bin','/usr/local/bin',process.env.PATH||''].join(':')};
+  delete childEnv.TRADINGAGENTS_PAPER_APPROVAL_KEY;
+  if(approvalKey)childEnv.TRADINGAGENTS_PAPER_APPROVAL_KEY=approvalKey;
   const child=spawn(manifest.python,[path.join(manifest.repo,'desktop','bridge.py')],{
-   cwd:manifest.repo,env:{...process.env,PYTHONUNBUFFERED:'1',PATH:[path.join(app.getPath('home'),'.local','bin'),'/opt/homebrew/bin','/usr/local/bin',process.env.PATH||''].join(':')},
+   cwd:manifest.repo,env:childEnv,
    stdio:['pipe','pipe','pipe'],detached:true
   });
   let buffer='',result,error,stderr=false;
@@ -29,7 +34,7 @@ function bridge(action,payload={},long=false){
   child.on('close',code=>{
    const cancelled=long&&active?.cancelled;const action=long?active?.action:null;
    if(long)active=null;
-   if(cancelled){send('cancelled',{message:action==='subscription_login'?'Đã hủy phiên đăng nhập ChatGPT.':action==='review_council'?'Đã dừng hội đồng. Mở báo cáo và chọn Tiếp tục hội đồng để chạy tiếp.':'Đã dừng. Có thể chạy lại cùng mã, ngày và cấu hình để tiếp tục từ checkpoint.'});resolve({cancelled:true});}
+   if(cancelled){send('cancelled',{message:action==='subscription_login'?'Đã hủy phiên đăng nhập ChatGPT.':'Đã dừng. Có thể chạy lại cùng mã, ngày và cấu hình để tiếp tục từ checkpoint.'});resolve({cancelled:true});}
    else if(error||code!==0||result===undefined){const message=error?.message||'Tiến trình TradingAgents kết thúc trước khi trả kết quả.';if(long)send('failed',{message,type:error?.type||'ProcessError'});reject(new Error(message));}
    else {if(long)send('completed',result);resolve(result);}
   });
@@ -54,10 +59,25 @@ function checkSender(event){if(!window||event.sender!==window.webContents)throw 
 ipcMain.handle('ta:request',async(event,action,payload)=>{
  checkSender(event);
  if(quickActions.has(action))return bridge(action,payload||{});
+ if(action==='paper_reject'){if(active||approving)throw new Error('Chờ tác vụ hiện tại kết thúc.');return bridge(action,payload||{});}
+ if(action==='paper_review'){
+  if(active||approving)throw new Error('Chờ tác vụ hiện tại kết thúc trước khi duyệt lệnh.');
+  approving=true;
+  try{
+   const preview=await bridge('paper_preview',{id:payload?.id});
+   if(preview.status!=='PROPOSED')throw new Error('Lệnh đã được xử lý.');
+   const o=preview.order;const v=n=>new Intl.NumberFormat('vi-VN').format(n)+' VND';
+   const answer=await dialog.showMessageBox(window,{type:'question',buttons:['Chưa đồng ý','Đồng ý gửi lệnh TIỀN ẢO'],defaultId:0,cancelId:0,title:'Duyệt lệnh tiền ảo — Trading Agents',message:`${o.side==='Buy'?'MUA':'BÁN'} ${o.quantity} cổ phiếu ${o.ticker}`,detail:`CHỈ TIỀN ẢO · Backtrader daily replay\nSàn tham chiếu: ${o.exchange}\nGiá giới hạn: ${v(o.limit_price)}/cổ phiếu\nGiá trị tối đa: ${v(preview.notional)}\nPhí/thuế ước tính: ${v(preview.estimated_fee)}\nTiền khả dụng: ${v(preview.available_cash)}\nNgày mô phỏng: ${o.asof} · Ngày phân tích: ${o.analysis_date}\n\n${o.rationale}\nThiếu dữ liệu: ${o.data_gaps.join('; ')||'Không có mục được PM khai báo'}\n\nLệnh chỉ chờ khớp từ nến giao dịch tiếp theo, tối đa 1% khối lượng ngày. Hết hiệu lực sau phiên đủ điều kiện đầu tiên. Mô phỏng T+2 cuối ngày. Không gửi lệnh đến sàn thật.`});
+   if(answer.response!==1)return {cancelled:true};
+   const timestamp=Math.floor(Date.now()/1000),secret=crypto.randomBytes(32).toString('hex');
+   const signature=crypto.createHmac('sha256',secret).update(`${preview.id}|${preview.preview_hash}|${timestamp}`).digest('hex');
+   return await bridge('paper_approve',{id:preview.id,preview_hash:preview.preview_hash,approval:{timestamp,signature}},false,secret);
+  }finally{approving=false;}
+ }
  if(action==='clear_checkpoints'){if(active)throw new Error('Dừng tác vụ đang chạy trước khi xóa checkpoint.');const answer=await dialog.showMessageBox(window,{type:'warning',buttons:['Giữ lại','Xóa checkpoint'],defaultId:0,cancelId:0,title:'Chạy mới',message:'Xóa toàn bộ checkpoint đã lưu?',detail:'Không xóa báo cáo hoặc memory. Các lượt đang dở sẽ không thể tiếp tục từ checkpoint cũ.'});if(answer.response!==1)return {cancelled:true};return bridge('clear_checkpoints');}
  if(action==='status')return active?{action:active.action,payload:active.payload,started:active.started}:null;
  if(action==='start'){
-  if(active)throw new Error('Một tác vụ đang chạy. Hãy đợi hoặc dừng tác vụ đó.');
+  if(active||approving)throw new Error('Một tác vụ đang chạy. Hãy đợi hoặc dừng tác vụ đó.');
   if(!jobActions.has(payload?.action))throw new Error('Unsupported TradingAgents job');
   send('launching',{action:payload.action});bridge(payload.action,payload.payload||{},true).catch(()=>{});return {started:true};
  }
@@ -87,7 +107,7 @@ app.whenReady().then(()=>{
  const command=(action,payload={})=>()=>window.webContents.send('ta:menu',{action,payload});
  Menu.setApplicationMenu(Menu.buildFromTemplate([
   {label:'Trading Agents',submenu:[{label:'Giới thiệu Trading Agents',role:'about'},{type:'separator'},{label:'Cấu hình…',accelerator:'CmdOrCtrl+,',click:command('navigate',{page:'settings'})},{type:'separator'},{role:'hide'},{role:'hideOthers'},{role:'unhide'},{type:'separator'},{label:'Thoát Trading Agents',role:'quit'}]},
-  {label:'Nghiên cứu',submenu:[{label:'Phân tích thị trường',accelerator:'CmdOrCtrl+1',click:command('navigate',{page:'analysis'})},{label:'Chạy phân tích',accelerator:'CmdOrCtrl+Return',click:command('analyze')},{type:'separator'},{label:'Backtest',accelerator:'CmdOrCtrl+2',click:command('navigate',{page:'backtest'})},{label:'Dừng tác vụ',accelerator:'CmdOrCtrl+.',click:command('cancel')}]},
+  {label:'Nghiên cứu',submenu:[{label:'Phân tích thị trường',accelerator:'CmdOrCtrl+1',click:command('navigate',{page:'analysis'})},{label:'Chạy phân tích',accelerator:'CmdOrCtrl+Return',click:command('analyze')},{type:'separator'},{label:'Dữ liệu & quyết định',accelerator:'CmdOrCtrl+5',click:command('navigate',{page:'evidence'})},{label:'Danh mục tiền ảo',accelerator:'CmdOrCtrl+6',click:command('navigate',{page:'paper'})},{label:'Backtest',accelerator:'CmdOrCtrl+2',click:command('navigate',{page:'backtest'})},{label:'Dừng tác vụ',accelerator:'CmdOrCtrl+.',click:command('cancel')}]},
   {label:'Báo cáo',submenu:[{label:'Thư viện báo cáo',accelerator:'CmdOrCtrl+3',click:command('navigate',{page:'reports'})},{label:'Mở báo cáo hiện tại',click:command('open_report')},{label:'Sao chép Markdown',click:command('copy_report')}]},
   {label:'Sửa',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]},
   {label:'Công cụ',submenu:[{label:'Memory & phản tư',accelerator:'CmdOrCtrl+4',click:command('navigate',{page:'memory'})},{label:'Mô hình & dữ liệu',click:command('navigate',{page:'settings'})},{label:'Đăng nhập Subscription',click:command('navigate',{page:'settings'})},{type:'separator'},{label:'Kiểm tra cài đặt',click:command('doctor')}]},
