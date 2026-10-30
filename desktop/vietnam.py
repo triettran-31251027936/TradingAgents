@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 4
+VERSION = 5
 LOCK = threading.Lock()
 
 
@@ -575,6 +575,30 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             }
             for kind in ("income", "cash")
         }
+        domestic_macro = {}
+        if not prices_only:
+            from desktop import macro_vietnam
+
+            domestic_macro = macro_vietnam.load(asof, cache_dir)
+            metrics.update(macro_vietnam.metrics(domestic_macro))
+            from desktop.macro_releases import load as load_releases
+
+            releases = load_releases(asof, cache_dir)
+            domestic_macro["official_releases"] = releases
+            metrics.update(releases["metrics"])
+            domestic_macro["warnings"].extend(releases["warnings"])
+            missing = [key for key, value in metrics.items() if value["value"] is None]
+            warnings.extend(domestic_macro.get("warnings", []))
+            for source in domestic_macro.get("sources", []) + releases.get("sources", []):
+                sources.append(
+                    {
+                        "name": source.get("name", "Vietnam NSDP macro"),
+                        "url": source["url"],
+                        "retrieved_at": source.get("retrieved_at", "unavailable"),
+                        "sha256": source.get("sha256"),
+                        "status": source["status"],
+                    }
+                )
         universe_path = folder / "symbols.json"
         universe = (
             json.loads(universe_path.read_text())
@@ -603,6 +627,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             "provider": "Vietcap public market data",
             "prices": prices,
             "benchmark": benchmark,
+            "domestic_macro": domestic_macro,
             "statements": book,
             "metrics": metrics,
             "financial_reconciliation": reconciliation,
@@ -628,7 +653,9 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
 
 
 def capsule(bundle):
-    return json.dumps(
+    from desktop.macro_vietnam import summary as macro_summary
+
+    result = json.dumps(
         {
             k: bundle[k]
             for k in [
@@ -650,6 +677,11 @@ def capsule(bundle):
         ensure_ascii=False,
         allow_nan=False,
     )
+    if bundle.get("domestic_macro"):
+        decoded = json.loads(result)
+        decoded["domestic_macro"] = macro_summary(bundle["domestic_macro"])
+        return json.dumps(decoded, ensure_ascii=False, allow_nan=False)
+    return result
 
 
 @contextmanager
@@ -733,7 +765,23 @@ def vendor_scope(bundle):
             ensure_ascii=False,
         )
 
+    def macro(indicator, asof, look_back_days=None):
+        if indicator.startswith("vn_"):
+            from desktop.macro_vietnam import tool
+
+            return tool(
+                bundle.get("domestic_macro", {"asof": bundle["analysis_date"]}),
+                indicator,
+                asof,
+                look_back_days,
+            )
+        # Existing FRED aliases retain their original country/series semantics.
+        return router.VENDOR_METHODS["get_macro_indicators"]["fred"](
+            indicator, asof, look_back_days
+        )
+
     methods = {
+        "get_macro_indicators": macro,
         "get_stock_data": prices,
         "get_indicators": indicator,
         "get_fundamentals": fundamentals,

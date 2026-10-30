@@ -18,6 +18,7 @@ VN_METHODS = (
     "get_cashflow",
     "get_income_statement",
     "get_news",
+    "get_macro_indicators",
 )
 
 
@@ -100,6 +101,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
         result["quantitative"] = {
             "ticker": quant["ticker"],
             "company_profile": quant.get("company_profile", {}),
+            "domestic_macro": quant.get("domestic_macro", {}),
             "quote_date": quant["prices"][-1]["date"],
             "metrics": quant["metrics"],
             "missing": quant["missing"],
@@ -175,12 +177,12 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                 name,
                 m["value"] if m["value"] is not None else "MISSING",
                 m["unit"],
-                m["asof"],
+                m["asof"] + (" published:" + m["published"] if m.get("published") else ""),
                 m["formula"] + " / " + m["source"],
             )
             text += "| " + " | ".join(cell(v) for v in values) + " |\n"
         text += "\n" + "\n".join("- " + cell(v) for v in q["basis"] + q["warnings"]) + "\n"
-        text += "\nCoverage is limited to the recorded sources; missing domestic insider, social and macro coverage is not zero activity.\n"
+        text += "\nCoverage is limited to the recorded sources; missing domestic insider/social coverage is not zero activity. NSDP macro files may lag newer press releases; read each observation period and freshness warning.\n"
         text += "\n### Quantitative context handoffs\n\n"
         for role, receipt in result.get("handoffs", {}).items():
             text += f"- {role}: {receipt['metric_count']} metrics supplied, {receipt['available_metrics']} available; snapshot {receipt['snapshot_fingerprint']}. Input verified, not a guarantee of correct interpretation.\n"

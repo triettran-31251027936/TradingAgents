@@ -58,7 +58,7 @@ current ticker's quantitative capsule. Backtest uses a fresh dated scope per
 cell while retaining upstream's grid, resume and scoring behavior.
 
 Coverage limits are visible: no dedicated domestic insider or community/social
-feed, no domestic macro series provider, no guaranteed full news articles, and
+feed, incomplete domestic rates/credit/FX coverage, no guaranteed full news articles, and
 no historical vintage of revised financial statements. Yahoo, Reddit,
 StockTwits, FRED and Polymarket tools are preserved; unavailable sources are
 reported, not replaced with invented values. SEC coverage does not turn into
@@ -315,3 +315,47 @@ because its statement metadata does not establish an explicit preferred-capital
 split. Bank-specific aliases distinguish TOTAL LIABILITIES and Minority interest.
 Industrial revenue/current-assets/CFO definitions do not automatically describe a
 bank; the remaining VCB gaps are recorded, not filled with industrial substitutes.
+
+### Official domestic macro transport (schema v5)
+
+The original get_macro_indicators tool now supports a Vietnam transport during
+VN jobs. Explicit vn_cpi/vn_cpi_yoy/vn_cpi_mom, vn_labor_force, vn_employment,
+vn_unemployment, vn_youth_unemployment and vn_underemployment aliases use NSDP
+SDMX files published by NSO. vn_nsdp:<INDICATOR> exposes every retrieved SDMX
+series with raw dimensions; the live sample contains 48 series. Existing cpi,
+unemployment, fed_funds_rate and raw FRED aliases keep their original semantics
+and still use the original FRED implementation. They are not renamed VN data.
+
+Raw file versions are SHA-256 checked, cached for six hours and archived by
+content hash with first-observed timestamps. A historical query can only reuse
+a local vintage first observed by its analysis date; otherwise it is withheld.
+No quarterly interpolation into monthly rows or forward filling is performed.
+CPI changes use same-base observations at exactly 1/12-month offsets. NSDP count
+scales are applied explicitly. NSDP's percent-rate UNIT_MULT=3 is inconsistent
+with the official release's percentage definition: rates retain raw percentages
+without a 1000x multiplier, with an explicit warning and official cross-check
+link. Canonical rate metrics use fractions; tool tables use declared percentages.
+
+The currently retrieved CPI file ends at 2025-10 and labour at 2026-Q2. Both are
+marked stale under the disclosed 62-day monthly / 110-day quarterly heuristic;
+this is not an authoritative publication calendar. A successful download is not
+evidence of current-period coverage. A cached network failure keeps the original
+retrieval time and source error status. Missing sources do not become zero data.
+
+Newer official releases come from NSO's public WordPress REST API. Their published
+and modified GMT timestamps are checked against the analysis cutoff. Only exact,
+unambiguous period-specific statements produce vn_release_* numeric facts.
+The live sample extracts September 2026 CPI MoM 0.62% and YoY 5.08%; Q3/2026
+working-age unemployment 2.22%, underemployment 1.31%, youth unemployment 9.07%.
+The nine-month 1.53% underemployment and 8.87% youth figures in the same release
+are not substituted for quarterly rates. Conflicting statements or changed prose
+produce missing values. Provider revisions can be unmarked; this is not a full
+historical vintage archive. SDMX and release observations retain separate names,
+periods, source URLs/hashes and status rather than overwriting one another.
+
+The canonical capsule delivers compact macro summaries to all decision roles;
+full source observations remain in quantitative.json and available through the
+original macro tool. Both UI and exported evidence show observation/publication
+dates; stale figures have a visible warning. Sources are cached once across stock
+jobs. No paid inference or personal credentials are needed for these public data.
+Domestic policy rates, credit and FX still require further integration/validation.

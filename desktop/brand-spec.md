@@ -62,3 +62,12 @@ polling, source timestamps, retained stale data and connection errors. No genera
 prices, zero-filled gaps or fabricated order-book liquidity. The native consent
 dialog remains the sole execution approval path. Label the local simulator explicitly;
 external Paave links do not imply an account/order integration.
+
+
+## Macro evidence extension
+
+Retain the current evidence table and typography. Vietnamese labels distinguish
+NSDP file observations from newer NSO release facts. Stale values carry the
+text “Nguồn chậm” in the existing warning colour; observation and publication
+dates are shown separately. Keep percent/fraction conversion explicit and
+count units labelled “người”. No new navigation or decorative financial panels.
