@@ -242,3 +242,32 @@ cell, so a grid can spend more in total. Users can uncheck paid backtesting or
 choose the Codex+Antigravity preset. This update changes configuration only; no
 paid inference validation was run to apply the new split. Prior real-run reports
 retain their original requested-model metadata and are not relabelled.
+
+### Live-market paper practice, 3,000,000 VND
+
+The current portfolio uses a **new, separate** `practice.sqlite` account with exactly
+3M VND starting cash; the legacy `backtrader.sqlite` daily replay is retained.
+The trading page retrieves actual Vietcap minute/day OHLCV and recent matched trades.
+Lightweight Charts is vendored, checksum-verified, with LICENSE, NOTICE and attribution.
+Polling is approximately 30 seconds while the portfolio page is visible. It is REST
+market data and can be delayed; source and retrieval timestamps are both displayed.
+Matching advances on portfolio refresh; keep this page open after approving a proposal.
+
+PM execution proposals use the same 3M account snapshot. Historical analysis cannot
+create a current-market order. The renderer cannot call `paper_approve` directly;
+Electron's native, cancel-by-default dialog signs a short-lived confirmation.
+Approval creates a pending order only. Backtrader BackBroker matches from the next
+completed real minute after actual approval, with 100-share lots, a 1% minute-volume
+cap, continuous trading only, limit prices, fees, expiry and conservative T+2 EOD.
+There are no deposits, margin, short sales, fractional shares or fabricated odd-lot fills.
+Practice concentration can reach 100% of this small virtual account; this is not a
+recommendation to allocate all real capital. Source revisions and material missing
+post-approval history block matching, preserving the account for reconciliation.
+
+This is an open-source local paper account, **not** Paave/SSI exchange UAT integration.
+Paave offers Vietnamese virtual trading but its documented MCP is read-only:
+https://www.paave.ai/mcp . SSI's developer FAQ does not establish an available UAT
+order endpoint: https://developers.ssi.com.vn/docs/faq/service-overview . Backtrader's
+broker simulation is the selected open-source alternative:
+https://github.com/mementum/backtrader . The simulator does not reproduce exchange
+queue priority, auctions, corporate actions or a full authoritative holiday calendar.

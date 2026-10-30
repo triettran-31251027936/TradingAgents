@@ -484,10 +484,45 @@ def dispatch(action, payload):
     if action.startswith("paper_"):
         if not cfg.get("desktop_vietnam", {}).get("paper_enabled"):
             raise ValueError("Tài khoản tiền ảo chưa bật trong cấu hình.")
-        from desktop.paper import Store
+        from desktop.practice import PracticeStore as Store
         from desktop.vietnam import load
 
         store = Store(cfg["data_cache_dir"])
+        if action == "paper_market":
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            from desktop.market_board import board
+
+            ticker = str(payload.get("ticker", "HPG.VN")).upper()
+            interval = payload.get("interval", "1m")
+            market = board(ticker, interval, cfg["data_cache_dir"])
+            book = store.snapshot()
+            names = {o["ticker"] for o in book["orders"] if o["approved_at"]}
+            names.update(book["positions"])
+            names.add(ticker)
+            boards = {
+                name: (
+                    market
+                    if name == ticker and interval == "1m"
+                    else board(name, "1m", cfg["data_cache_dir"])
+                )
+                for name in sorted(names)
+            }
+            matching_error = None
+            try:
+                result = store.sync(boards, now=datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")))
+            except ValueError as exc:
+                matching_error = str(exc)
+                result = store.snapshot()
+            return {
+                "market": market,
+                "matching_error": matching_error,
+                "account": result,
+                "engine": "Backtrader / BackBroker",
+                "initial_cash": 3_000_000,
+                "mode": "local_paper_with_real_market_prices",
+            }
         if action == "paper_snapshot":
             return store.snapshot()
         if action == "paper_preview":

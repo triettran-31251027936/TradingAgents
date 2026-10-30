@@ -1,7 +1,7 @@
 const {app,BrowserWindow,ipcMain,dialog,shell,nativeTheme,Menu,clipboard}=require('electron');
 const fs=require('node:fs');
 const crypto=require('node:crypto');
-let approving=false;
+let approving=false, paperMarketPromise=null;
 const path=require('node:path');
 const {spawn,execFile}=require('node:child_process');
 const manifest=JSON.parse(fs.readFileSync(path.join(process.resourcesPath,'trading-desktop.json'),'utf8'));
@@ -15,7 +15,7 @@ const desktopUserData=path.join(manifest.repo,'work','desktop-userdata');
 fs.mkdirSync(desktopUserData,{recursive:true});app.setPath('userData',desktopUserData);
 // Keep preferences, reports and account data stable; isolate Chromium caches per build.
 const cacheRevision=crypto.createHash('sha256');
-for(const file of ['main.cjs','index.html','app.js','app.css'])cacheRevision.update(fs.readFileSync(path.join(__dirname,file)));
+for(const file of ['main.cjs','index.html','app.js','app.css','paper-market.js'])cacheRevision.update(fs.readFileSync(path.join(__dirname,file)));
 const sessionCache=path.join(desktopUserData,'session-cache',cacheRevision.digest('hex').slice(0,16));
 fs.mkdirSync(sessionCache,{recursive:true});app.setPath('sessionData',sessionCache);
 app.disableHardwareAcceleration();app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
@@ -27,7 +27,7 @@ let window,active=null,quitting=false,engineReady=false,metaPromise=null;
 const bridgeChildren=new Set();
 const bootstrapFile=path.join(desktopUserData,'startup-meta.json');
 const quickActions=new Set(['meta','history','report','memory','save_config','doctor','subscription_status','subscription_redirect','subscription_logout','subscription_models','api_key_status','save_api_key','remove_api_key','paper_snapshot','paper_preview']);
-const jobActions=new Set(['analyze','backtest','settle','subscription_login','test_provider','paper_advance']);
+const jobActions=new Set(['analyze','backtest','settle','subscription_login','test_provider']);
 function send(type,payload){if(window&&!window.isDestroyed())window.webContents.send('ta:event',{type,payload});}
 function bridge(action,payload={},long=false,approvalKey=null){
  if(action==='meta')startupFailure('meta spawn requested');
@@ -91,17 +91,25 @@ ipcMain.handle('ta:request',async(event,action,payload)=>{
   if(!metaPromise)metaPromise=bridge('meta',{}).then(meta=>{engineReady=true;fs.writeFileSync(bootstrapFile,JSON.stringify(meta),{mode:0o600});return meta;}).finally(()=>{metaPromise=null;});
   return metaPromise;
  }
- if(['save_config','save_api_key','remove_api_key','paper_review','paper_reject','start'].includes(action)&&!engineReady)throw new Error('Bộ dữ liệu đang khởi động. Chờ đồng bộ cấu hình trước khi thực hiện.');
+ if(['save_config','save_api_key','remove_api_key','paper_review','paper_reject','paper_market','start'].includes(action)&&!engineReady)throw new Error('Bộ dữ liệu đang khởi động. Chờ đồng bộ cấu hình trước khi thực hiện.');
+ if(action==='paper_market'){
+  if(approving)throw new Error('Chờ hoàn tất duyệt lệnh trước khi cập nhật giá.');
+  if(paperMarketPromise)await paperMarketPromise.catch(()=>{});
+  if(approving)throw new Error('Đang duyệt lệnh.');
+  const pending=bridge(action,payload||{});paperMarketPromise=pending;
+  try{return await pending;}finally{if(paperMarketPromise===pending)paperMarketPromise=null;}
+ }
  if(quickActions.has(action))return bridge(action,payload||{});
  if(action==='paper_reject'){if(active||approving)throw new Error('Chờ tác vụ hiện tại kết thúc.');return bridge(action,payload||{});}
  if(action==='paper_review'){
   if(active||approving)throw new Error('Chờ tác vụ hiện tại kết thúc trước khi duyệt lệnh.');
   approving=true;
   try{
+   if(paperMarketPromise)await paperMarketPromise.catch(()=>{});
    const preview=await bridge('paper_preview',{id:payload?.id});
    if(preview.status!=='PROPOSED')throw new Error('Lệnh đã được xử lý.');
    const o=preview.order;const v=n=>new Intl.NumberFormat('vi-VN').format(n)+' VND';
-   const answer=await dialog.showMessageBox(window,{type:'question',buttons:['Chưa đồng ý','Đồng ý gửi lệnh TIỀN ẢO'],defaultId:0,cancelId:0,title:'Duyệt lệnh tiền ảo — Trading Agents',message:`${o.side==='Buy'?'MUA':'BÁN'} ${o.quantity} cổ phiếu ${o.ticker}`,detail:`CHỈ TIỀN ẢO · Backtrader daily replay\nSàn tham chiếu: ${o.exchange}\nGiá giới hạn: ${v(o.limit_price)}/cổ phiếu\nGiá trị tối đa: ${v(preview.notional)}\nPhí/thuế ước tính: ${v(preview.estimated_fee)}\nTiền khả dụng: ${v(preview.available_cash)}\nNgày mô phỏng: ${o.asof} · Ngày phân tích: ${o.analysis_date}\n\n${o.rationale}\nThiếu dữ liệu: ${o.data_gaps.join('; ')||'Không có mục được PM khai báo'}\n\nLệnh chỉ chờ khớp từ nến giao dịch tiếp theo, tối đa 1% khối lượng ngày. Hết hiệu lực sau phiên đủ điều kiện đầu tiên. Mô phỏng T+2 cuối ngày. Không gửi lệnh đến sàn thật.`});
+   const answer=await dialog.showMessageBox(window,{type:'question',buttons:['Chưa đồng ý','Đồng ý gửi lệnh TIỀN ẢO'],defaultId:0,cancelId:0,title:'Duyệt lệnh tiền ảo — Trading Agents',message:`${o.side==='Buy'?'MUA':'BÁN'} ${o.quantity} cổ phiếu ${o.ticker}`,detail:`CHỈ TIỀN ẢO · Backtrader · vốn gốc 3.000.000 VND\nSàn tham chiếu: ${o.exchange}\nGiá giới hạn: ${v(o.limit_price)}/cổ phiếu\nGiá trị tối đa: ${v(preview.notional)}\nPhí/thuế ước tính: ${v(preview.estimated_fee)}\nTiền khả dụng: ${v(preview.available_cash)}\nNgày mô phỏng: ${o.asof} · Ngày phân tích: ${o.analysis_date}\n\n${o.rationale}\nThiếu dữ liệu: ${o.data_gaps.join('; ')||'Không có mục được PM khai báo'}\n\n${preview.matching} Mô phỏng T+2 cuối ngày. Không gửi lệnh đến sàn thật.`});
    if(answer.response!==1)return {cancelled:true};
    const timestamp=Math.floor(Date.now()/1000),secret=crypto.randomBytes(32).toString('hex');
    const signature=crypto.createHmac('sha256',secret).update(`${preview.id}|${preview.preview_hash}|${timestamp}`).digest('hex');

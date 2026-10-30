@@ -6,8 +6,8 @@ const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'ta-main-contract-'));
 const actual=path.resolve(__dirname,'../desktop');
 const fakePython=path.join(tmp,'.venv/bin/python');fs.mkdirSync(path.dirname(fakePython),{recursive:true});fs.writeFileSync(fakePython,'');fs.mkdirSync(path.join(tmp,'.venv/lib/python3.12/site-packages'),{recursive:true});
 fs.writeFileSync(path.join(tmp,'trading-desktop.json'),JSON.stringify({repo:tmp,python:fakePython,pythonExecutable:fakePython,pythonSitePackages:path.join(tmp,'.venv/lib/python3.12/site-packages')}));
-const hooks={},requests=[];let response=0,win,pid=1000;
-const preview={id:'virtual-test-order',preview_hash:'test-preview',status:'PROPOSED',notional:5000000,estimated_fee:7500,available_cash:100000000,order:{ticker:'FPT.VN',quantity:100,side:'Buy',limit_price:50000,exchange:'HOSE',asof:'2026-10-29',analysis_date:'2026-10-30',rationale:'Isolated test only',data_gaps:[]}};
+const hooks={},requests=[];let response=0,win,pid=1000,lastDialog;
+const preview={id:'virtual-test-order',preview_hash:'test-preview',status:'PROPOSED',matching:'Nến phút thật sau duyệt · tối đa 1% volume phút',starting_capital:3000000,notional:2500000,estimated_fee:3750,available_cash:3000000,order:{ticker:'HPG.VN',quantity:100,side:'Buy',limit_price:25000,exchange:'HOSE',asof:'2026-10-29',analysis_date:'2026-10-30',rationale:'Isolated test only',data_gaps:[]}};
 const meta={version:'test',config:{},history:[],providers:[]};
 function spawn(_file,_args,options){
  assert.equal(options.cwd,tmp,'bridge cwd must avoid Documents getcwd stalls');
@@ -18,7 +18,7 @@ function spawn(_file,_args,options){
 }
 class Window{constructor(){win=this;this.webContents={send(){},setWindowOpenHandler(){},on(){},session:{setPermissionRequestHandler(){}}};}loadFile(){return Promise.resolve();}on(){}isDestroyed(){return false;}}
 const app={setName(){},setPath(){},getPath(){return tmp;},disableHardwareAcceleration(){},commandLine:{appendSwitch(){}},whenReady(){return Promise.resolve();},setAboutPanelOptions(){},on(name,fn){hooks[name]=fn;},quit(){}};
-const electron={app,BrowserWindow:Window,ipcMain:{handle(name,fn){hooks[name]=fn;}},dialog:{async showMessageBox(){return {response};}},shell:{},nativeTheme:{},Menu:{setApplicationMenu(){},buildFromTemplate(x){return x;}},clipboard:{}};
+const electron={app,BrowserWindow:Window,ipcMain:{handle(name,fn){hooks[name]=fn;}},dialog:{async showMessageBox(_window,options){lastDialog=options;return {response};}},shell:{},nativeTheme:{},Menu:{setApplicationMenu(){},buildFromTemplate(x){return x;}},clipboard:{}};
 const proc={resourcesPath:tmp,env:{PATH:'/test/bin',PYTHONHOME:'/wrong/home',PYTHONPATH:'/wrong/path',__PYVENV_LAUNCHER__:'/wrong/python',TRADINGAGENTS_PAPER_APPROVAL_KEY:'must-not-leak'},on(){},kill(){}};
 const context={require:name=>name==='electron'?electron:name==='node:child_process'?{spawn,execFile(){}}:require(name),__dirname:actual,process:proc,URL,Intl,Promise,setTimeout,clearTimeout};
 (async()=>{
@@ -27,13 +27,20 @@ const context={require:name=>name==='electron'?electron:name==='node:child_proce
   await Promise.resolve();const send=(action,payload={})=>hooks['ta:request']({sender:win.webContents},action,payload);
   assert.equal(await send('bootstrap'),null);
   await assert.rejects(send('start',{action:'analyze'}),/khởi động/);
+  await assert.rejects(send('paper_market'),/khởi động/);
   await Promise.all([send('meta'),send('meta')]);
   assert.equal(requests.filter(x=>x.action==='meta').length,1,'deduplicate startup metadata');
   assert.equal((await send('bootstrap')).version,'test');
   const environment=requests[0].env;
   for(const name of ['PYTHONHOME','PYTHONPATH','__PYVENV_LAUNCHER__','TRADINGAGENTS_PAPER_APPROVAL_KEY'])assert.equal(environment[name],undefined);
+  await send('paper_market',{ticker:'HPG.VN',interval:'1m'});
+  assert.ok(requests.some(x=>x.action==='paper_market'));
   const cancelled=await send('paper_review',{id:preview.id});assert.equal(cancelled.cancelled,true);
   assert.equal(requests.filter(x=>x.action==='paper_approve').length,0,'cancel never submits');
+  assert.equal(lastDialog.defaultId,0);assert.equal(lastDialog.cancelId,0);
+  assert.ok(lastDialog.detail.includes(preview.matching));
+  assert.ok(lastDialog.detail.includes('3.000.000'));
+  assert.ok(!lastDialog.detail.includes('daily replay'));
   response=1;await send('paper_review',{id:preview.id});
   const approved=requests.find(x=>x.action==='paper_approve');assert.ok(approved);
   const signature=crypto.createHmac('sha256',approved.env.TRADINGAGENTS_PAPER_APPROVAL_KEY).update(`${preview.id}|${preview.preview_hash}|${approved.payload.approval.timestamp}`).digest('hex');

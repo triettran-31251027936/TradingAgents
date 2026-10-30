@@ -59,7 +59,7 @@ def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper
             and cfg.get("desktop_vietnam", {}).get("paper_enabled")
             and portfolio is None
         ):
-            from desktop.paper import Store
+            from desktop.practice import PracticeStore as Store
             from tradingagents.portfolio import PortfolioContext
 
             store = Store(cfg["data_cache_dir"])

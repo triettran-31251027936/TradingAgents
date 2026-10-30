@@ -197,10 +197,12 @@ def replay(
 
 
 class Store:
-    def __init__(self, cache_dir):
+    def __init__(self, cache_dir, *, filename="backtrader.sqlite", initial_cash=INITIAL_CASH):
         folder = Path(cache_dir) / "paper"
         folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.path = folder / "backtrader.sqlite"
+        if filename not in ("backtrader.sqlite", "practice.sqlite"):
+            raise ValueError("Tên tài khoản không hợp lệ.")
+        self.path = folder / filename
         if self.path.is_symlink():
             raise ValueError("Không mở tài khoản qua file liên kết.")
         with self.connect() as db:
@@ -212,11 +214,11 @@ class Store:
             db.execute(
                 "INSERT OR IGNORE INTO account VALUES(1,?,NULL,0,?)",
                 (
-                    INITIAL_CASH,
+                    initial_cash,
                     json.dumps(
                         {
-                            "cash": INITIAL_CASH,
-                            "nav": INITIAL_CASH,
+                            "cash": initial_cash,
+                            "nav": initial_cash,
                             "positions": {},
                             "orders": {},
                             "sessions": [],
@@ -289,7 +291,7 @@ class Store:
                 "reserved_buy_value": reserved_buy,
                 "commission": 0.0015,
                 "sell_tax": 0.001,
-                "max_position_fraction": 0.20,
+                "max_position_fraction": getattr(self, "max_position_fraction", 0.20),
                 "settlement": "Available after two subsequent observed trading sessions (conservative end-of-day T+2 model).",
                 "orders": [
                     {

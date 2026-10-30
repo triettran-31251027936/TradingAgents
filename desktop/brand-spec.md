@@ -49,3 +49,16 @@ and Danh mục tiền ảo. Use source-backed numeric tables, no decorative char
 Show empty/missing/blocked/proposed/approved/filled states. The primary order
 button opens a native consent dialog; cancellation is the default. No final
 council group. Retain all original graph roles and advanced configuration.
+
+## 3M VND practice market extension
+
+Keep the existing financial workstation identity. The portfolio page now prioritizes
+four account figures, a real OHLCV candle/volume chart, a compact trade tape, and
+then PM proposals and positions. Default HPG.VN makes a 100-share lot feasible
+within the 3M budget at the current reference price; the user can change the symbol.
+Use local Lightweight Charts 5.2.1, existing mint/red direction colors and mono
+numeric alignment. Support 1-minute/day intervals, pan/zoom, fit, 30-second visible-page
+polling, source timestamps, retained stale data and connection errors. No generated
+prices, zero-filled gaps or fabricated order-book liquidity. The native consent
+dialog remains the sole execution approval path. Label the local simulator explicitly;
+external Paave links do not imply an account/order integration.

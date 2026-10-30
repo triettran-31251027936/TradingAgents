@@ -68,7 +68,19 @@ def main():
     resources.mkdir()
     for name, raw in notices.items():
         (resources / name).write_bytes(raw)
-    include = ["main.cjs", "preload.cjs", "index.html", "app.css", "app.js", "assets/logo.png"]
+    include = [
+        "main.cjs",
+        "preload.cjs",
+        "index.html",
+        "app.css",
+        "app.js",
+        "paper-market.js",
+        "vendor/lightweight-charts/lightweight-charts.js",
+        "vendor/lightweight-charts/LICENSE",
+        "vendor/lightweight-charts/NOTICE",
+        "vendor/lightweight-charts/provenance.json",
+        "assets/logo.png",
+    ]
     files = {name: (ROOT / "desktop" / name).read_bytes() for name in include}
     files["package.json"] = json.dumps(
         {
