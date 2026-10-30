@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 7
+VERSION = 8
 LOCK = threading.Lock()
 
 
@@ -651,6 +651,33 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
                     "status": insider_dealings["status"],
                 }
             )
+        domestic_social = {}
+        if not prices_only:
+            from desktop import social_vietnam
+
+            try:
+                domestic_social = social_vietnam.load(ticker, asof, cache_dir)
+            except (OSError, ValueError) as exc:
+                domestic_social = {
+                    "ticker": ticker + ".VN",
+                    "asof": asof,
+                    "status": "unavailable",
+                    "records": [],
+                    "context_records": [],
+                    "warnings": [type(exc).__name__],
+                    "source_url": f"https://f247.com/tag/{ticker}.rss",
+                    "scope": social_vietnam.SCOPE,
+                }
+            warnings.extend(domestic_social.get("warnings", []))
+            sources.append(
+                {
+                    "name": "F247 public community RSS sample",
+                    "url": domestic_social["source_url"],
+                    "retrieved_at": domestic_social.get("retrieved_at", "unavailable"),
+                    "sha256": domestic_social.get("source_sha256"),
+                    "status": domestic_social["status"],
+                }
+            )
         universe_path = folder / "symbols.json"
         universe = (
             json.loads(universe_path.read_text())
@@ -681,6 +708,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             "benchmark": benchmark,
             "domestic_macro": domestic_macro,
             "insider_dealings": insider_dealings,
+            "domestic_social": domestic_social,
             "statements": book,
             "metrics": metrics,
             "financial_reconciliation": reconciliation,
@@ -737,6 +765,10 @@ def capsule(bundle):
         from desktop.insider_vietnam import summary as insider_summary
 
         decoded["insider_dealings"] = insider_summary(bundle["insider_dealings"])
+    if bundle.get("domestic_social"):
+        from desktop.social_vietnam import summary as social_summary
+
+        decoded["domestic_social"] = social_summary(bundle["domestic_social"])
     return json.dumps(decoded, ensure_ascii=False, allow_nan=False)
 
 

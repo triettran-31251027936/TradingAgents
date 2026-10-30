@@ -57,7 +57,7 @@ and missing values. Memory reflections on other tickers do not receive the
 current ticker's quantitative capsule. Backtest uses a fresh dated scope per
 cell while retaining upstream's grid, resume and scoring behavior.
 
-Coverage limits are visible: no dedicated domestic community/social
+Coverage limits are visible: bounded domestic community RSS sample, no representative social
 feed, incomplete domestic rates/credit/FX coverage, no guaranteed full news articles, and
 no historical vintage of revised financial statements. Yahoo, Reddit,
 StockTwits, FRED and Polymarket tools are preserved; unavailable sources are
@@ -413,3 +413,19 @@ registration windows are retained with warnings and excluded from active plans.
 The source can update results under an earlier announcement date. Historical
 queries therefore require an exact locally observed vintage no later than the
 analysis date, rather than treating registration dates as result-publication dates.
+
+
+### Vietnamese community sample (v8)
+F247's public per-ticker tag RSS supplies dated first-post excerpts. The source
+contains up to the feed's current items, filtered to the original seven-day window;
+it is not thread/reply coverage or a census. All retained excerpt records are saved
+and shown in evidence/export. The shared capsule supplies the eight newest sample
+records that explicitly mention the ticker in their supplied title/excerpt (100 excerpt words each), with an explicit omitted count. Author/profile,
+avatar, contact and tracking fields are not retained. Tags alone do not establish
+company relevance; tag-only records stay inspectable but outside model context. No sentiment score, investor count or bullish/bearish fraction
+is computed from this source. First-observed snapshot guards prevent current edits
+being passed off as historical knowledge. Failed refresh preserves source timestamps.
+The original sentiment node, StockTwits and Reddit remain separate. Antigravity
+must read back every supplied F247 ID and source status; claims cannot reference
+unseen IDs. Sparse/missing data requires low confidence. These checks verify source
+identity and transport, not semantic truth or representative investor sentiment.

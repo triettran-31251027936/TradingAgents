@@ -104,6 +104,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "company_profile": quant.get("company_profile", {}),
             "domestic_macro": quant.get("domestic_macro", {}),
             "insider_dealings": quant.get("insider_dealings", {}),
+            "domestic_social": quant.get("domestic_social", {}),
             "quote_date": quant["prices"][-1]["date"],
             "metrics": quant["metrics"],
             "missing": quant["missing"],
@@ -184,7 +185,7 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
             )
             text += "| " + " | ".join(cell(v) for v in values) + " |\n"
         text += "\n" + "\n".join("- " + cell(v) for v in q["basis"] + q["warnings"]) + "\n"
-        text += "\nCoverage is limited to the recorded sources; domestic shareholder-dealing coverage is aggregator-reported and distinct from exchange-confirmed results; missing social coverage is not zero sentiment. NSDP macro files may lag newer press releases; read each observation period and freshness warning.\n"
+        text += "\nCoverage is limited to the recorded sources; domestic shareholder-dealing coverage is aggregator-reported and distinct from exchange-confirmed results; community RSS is a bounded unverified opinion sample, and missing social coverage is not zero sentiment. NSDP macro files may lag newer press releases; read each observation period and freshness warning.\n"
         insider = q.get("insider_dealings") or {}
         if insider:
             text += "\n### Giao dịch cổ đông và người nội bộ — toàn bộ dòng nguồn đã lưu\n\n"
@@ -205,6 +206,17 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                     "; ".join(row.get("quality_notes", [])),
                 )
                 text += "| " + " | ".join(cell(v) for v in values) + " |\n"
+        social = q.get("domestic_social") or {}
+        if social:
+            text += "\n### Mẫu thảo luận cộng đồng Việt Nam — F247 RSS\n\n"
+            text += "Mẫu RSS theo tag, trích bài đầu; không đọc bình luận/hình ảnh, không đại diện toàn thị trường. Ngày RSS không chứng minh thời điểm sửa nội dung. Chủ đề gắn tag có thể nói về doanh nghiệp khác. Không suy ra tỷ lệ lạc quan, số người hay sức mua từ mẫu này.\n\n"
+            text += f"Trạng thái: {cell(social.get('status'))}; giữ {len(social.get('records', []))} chủ đề trong kỳ; context dùng {len(social.get('context_records', []))} chủ đề có nhắc mã.\n\n"
+            for row in social.get("records", []):
+                text += (
+                    f"- [{cell(row['title'])}]({row['url']}) · {cell(row['published'])} · {cell(row['relevance'])} · {cell(row['excerpt'])}"
+                    + (" [trích đoạn đã cắt]" if row["excerpt_truncated"] else " [phần mô tả RSS]")
+                    + "\n"
+                )
         text += "\n### Quantitative context handoffs\n\n"
         for role, receipt in result.get("handoffs", {}).items():
             text += f"- {role}: {receipt['metric_count']} metrics supplied, {receipt['available_metrics']} available; snapshot {receipt['snapshot_fingerprint']}. Input verified, not a guarantee of correct interpretation.\n"

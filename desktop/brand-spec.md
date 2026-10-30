@@ -80,3 +80,10 @@ units “dòng”. A labelled disclosure opens all saved rows in a horizontally
 scrollable table; no silent preview truncation. Missing quantities remain “Không
 có dữ liệu”. Source announcement and completion dates use separate columns;
 registration errors remain visible. No new navigation or approval interactions.
+
+
+## Community evidence extension
+Use an ordinary labelled disclosure under the evidence notes, preserving navigation,
+colour and typography. Every retained topic has a safe source link, RSS date,
+relevance warning, context-inclusion status and labelled excerpt. Explain missing
+coverage without presenting a neutral score or artificial bullish/bearish chart.
