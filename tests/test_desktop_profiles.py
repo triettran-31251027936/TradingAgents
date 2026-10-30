@@ -43,6 +43,10 @@ def test_balanced_three_providers_cover_every_original_role_once():
         "effort": "high",
     }
     assert routes["Sentiment Analyst"]["model"] == "gemini-3.8-flash-high"
+    # The live acceptance measured three API turns per analyst, versus one
+    # per risk role. Split tool-heavy analysts too, while retaining 6/6 roles.
+    assert routes["Fundamentals Analyst"]["provider"] == "codex_cli"
+    assert routes["Neutral Analyst"]["provider"] == "deepseek"
     assert all(
         r["model"] == "deepseek-flash" for r in routes.values() if r["provider"] == "deepseek"
     )
@@ -59,15 +63,15 @@ def test_balanced_preset_is_not_blocked_by_retired_one_request_limit():
 def test_budget_allows_tool_loops_but_stops_after_explicit_cap():
     cfg = balanced_config()
     budget = PaidBudget(cfg)
-    # Three analysts can each use six tool rounds plus a final report; two
-    # research turns and one reflection consume the remaining three requests.
-    expected = 3 * (cfg["max_tool_rounds"] + 1) + 2 + 1
-    assert expected == 24
-    for _ in range(24):
+    # Two analysts retain all six tool rounds and a final report. Add both
+    # researchers, neutral risk and one Memory reflection.
+    expected = 2 * (cfg["max_tool_rounds"] + 1) + 2 + 1 + 1
+    assert expected == 18
+    for _ in range(expected):
         budget.reserve("deepseek")
     with pytest.raises(ValueError):
         budget.reserve("deepseek")
-    assert budget.summary()["deepseek_attempts"] == 24
+    assert budget.summary()["deepseek_attempts"] == expected
 
 
 def test_every_paid_role_is_capped_without_sdk_retry():

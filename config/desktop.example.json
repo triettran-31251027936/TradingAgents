@@ -20,7 +20,7 @@
   },
   "desktop_budget": {
     "enabled": true,
-    "deepseek_max_requests": 24,
+    "deepseek_max_requests": 18,
     "deepseek_max_output_tokens": 2048,
     "deepseek_in_backtest": true
   },
@@ -40,9 +40,9 @@
       "max_tokens": 2048
     },
     "Fundamentals Analyst": {
-      "provider": "deepseek",
-      "model": "deepseek-flash",
-      "max_tokens": 2048
+      "provider": "codex_cli",
+      "model": "gpt-6.1-sol",
+      "effort": "low"
     },
     "Bull Researcher": {
       "provider": "deepseek",
@@ -75,9 +75,9 @@
       "effort": "medium"
     },
     "Neutral Analyst": {
-      "provider": "codex_cli",
-      "model": "gpt-6.1-sol",
-      "effort": "low"
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "max_tokens": 2048
     },
     "Portfolio Manager": {
       "provider": "codex_cli",

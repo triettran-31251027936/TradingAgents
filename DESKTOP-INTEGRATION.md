@@ -26,8 +26,8 @@ The latest user-selected profile balances the two primary providers:
 
 | Roles | Backend | Requested model |
 |---|---|---|
-| Research Manager, Trader, three Risk roles, Portfolio Manager | Codex CLI | gpt-6.1-sol; high effort for PM, medium/low for other roles |
-| Market, News, Fundamentals, Bull, Bear, Memory reflection | DeepSeek API | deepseek-flash (V4.1 Flash alias), max output2048, no SDK retry |
+| Fundamentals, Research Manager, Trader, Aggressive Risk, Conservative Risk, Portfolio Manager | Codex CLI | gpt-6.1-sol; high effort for PM, medium/low for other roles |
+| Market, News, Bull, Bear, Neutral Risk, Memory reflection | DeepSeek API | deepseek-flash (V4.1 Flash alias), max output2048, no SDK retry |
 | Sentiment with context readback | agy CLI | gemini-3.8-flash-high |
 
 
@@ -230,17 +230,18 @@ The installed runtime, example profile and UI presets now use 6 Codex /6 DeepSee
 through bridge metadata, preventing the UI from restoring the retired one-Bear
 allocation. Saving role assignments also saves the visible request/token limits.
 
-The paid request cap is24 per analysis, max output2048 tokens/request, with SDK
-retries disabled. This accommodates three analysts' tool loops, two research
-turns and a reflection at the configured six-tool-round limit. Actual usage
+The paid request cap is18 per analysis, max output2048 tokens/request, with SDK
+retries disabled. This accommodates two analysts' tool loops, two research
+turns, neutral risk and a reflection at the configured six-tool-round limit. Actual usage
 can differ: Memory only calls a model when due, tool rounds vary and multiple
 reflections may hit the cap. Equal role counts do not imply equal token counts,
 latency or financial cost. No dollar balance is inferred.
 
 The same model distribution is enabled for backtest; the request cap is per
 cell, so a grid can spend more in total. Users can uncheck paid backtesting or
-choose the Codex+Antigravity preset. This update changes configuration only; no
-paid inference validation was run to apply the new split. Prior real-run reports
+choose the Codex+Antigravity preset. The latest swap is based on the real run
+below; it has routing/graph tests but has not itself been rerun with paid models.
+Prior real-run reports
 retain their original requested-model metadata and are not relabelled.
 
 ### Live-market paper practice, 3,000,000 VND
@@ -497,3 +498,27 @@ The configuration preserves 6 Codex / 6 DeepSeek / 1 Antigravity. Models and mar
 inputs are deterministic fixtures; no CLI process, paid inference, real data quality,
 semantic reasoning or native human approval is certified by this test. Full source
 provider/CLI/live-model acceptance remains a separate completion requirement.
+
+## Real mixed-provider desktop acceptance, 2026-10-30
+
+The actual desktop bridge completed all 13 original roles for VCB.VN using real
+VN sources and all three live providers, in an isolated book/history. The previous
+6/6/1 profile made 11 DeepSeek, 6 Codex and 1 agy requests. All 12 model-facing
+handoffs were recorded and agy's exact source/context readback passed. Memory
+ran but no reflection inference was due. PM returned a typed Hold execution;
+the account retained 3,000,000 VND, no positions and no approved orders.
+
+This motivated moving Fundamentals to Codex and Neutral Risk to DeepSeek while
+retaining 6/6/1 roles. Replaying the measured call counts predicts 9 paid and
+8 Codex calls; this is not a live measurement of the new profile or a promise
+of equal token counts. Both Analyst tool loops remain intact.
+
+Account checks showed approximately $0.04 lower balance, including one small
+DeepSeek schema probe. The live harness's HTTP dollar-reservation hook captured
+no requests, so its proposed $0.10 ceiling is unverified; only the actual
+request/output caps and provider usage receipts are evidence. Do not advertise
+a verified USD spending cap. StockTwits returned 404, FRED lacked credentials,
+and a Polymarket request failed. These remain unavailable, not fabricated.
+
+This one successful run does not certify every VN sector, historical vintage,
+reflection/backtest, native approval interaction or investment correctness.

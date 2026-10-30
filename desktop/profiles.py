@@ -6,7 +6,7 @@ DEEPSEEK_BALANCED_ROLES = frozenset(
     {
         "Market Analyst",
         "News Analyst",
-        "Fundamentals Analyst",
+        "Neutral Analyst",
         "Bull Researcher",
         "Bear Researcher",
         "Memory Log",
@@ -14,7 +14,7 @@ DEEPSEEK_BALANCED_ROLES = frozenset(
 )
 BALANCED_BUDGET = {
     "enabled": True,
-    "deepseek_max_requests": 24,
+    "deepseek_max_requests": 18,
     "deepseek_max_output_tokens": 2048,
     "deepseek_in_backtest": True,
 }
