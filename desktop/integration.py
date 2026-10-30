@@ -199,6 +199,11 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
             text += "| " + " | ".join(cell(v) for v in values) + " |\n"
         text += "\n" + "\n".join("- " + cell(v) for v in q["basis"] + q["warnings"]) + "\n"
         text += "\nCoverage is limited to the recorded sources; domestic shareholder-dealing coverage is aggregator-reported and distinct from exchange-confirmed results; community RSS is a bounded unverified opinion sample, and missing social coverage is not zero sentiment. NSDP macro files may lag newer press releases; read each observation period and freshness warning.\n"
+        comparison = (q.get("valuation_reconciliation") or {}).get("quote_comparison")
+        if comparison:
+            text += "\n### Đối chiếu giá định giá\n\n"
+            text += f"Giá đóng cửa chuẩn {cell(comparison.get('canonical_date'))}: {cell(comparison.get('canonical_close'))} VND/cp. Giá hồ sơ: {cell(comparison.get('provider_price'))}; giá vốn hóa/số cổ phiếu suy ra: {cell(comparison.get('provider_implied_price'))} VND/cp.\n\n"
+            text += f"Quan sát hồ sơ: {cell(comparison.get('provider_observed_at'))}. Thời điểm giá hồ sơ chưa biết; ngày quan sát không phải ngày của giá. Các phiên trước trùng mức giá: {cell(', '.join(comparison.get('matching_prior_canonical_dates', [])) or 'không ghi nhận')}. Trùng giá không chứng minh trễ/điều chỉnh; không tự rebase vốn hóa hoặc bỏ chặn định giá.\n\n"
         insider = q.get("insider_dealings") or {}
         if insider:
             text += "\n### Giao dịch cổ đông và người nội bộ — toàn bộ dòng nguồn đã lưu\n\n"

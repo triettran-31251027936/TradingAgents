@@ -100,3 +100,10 @@ unknown lookback. An ordinary reconciliation note explains the gross/net check.
 For banks, show “Không áp dụng cho ngân hàng” for excluded industrial definitions.
 The coverage denominator counts applicable metrics; show the excluded count
 separately. Never turn an excluded definition into zero or hide a real missing input.
+
+
+## Quote comparison evidence
+Show canonical date/price and observed source prices in ordinary evidence notes.
+Separate observation time from unknown quote time; explain coincident prior-close
+matches without declaring a cause. Preserve the existing warning colour and price
+format; no extra chart, action or order approval path is introduced.

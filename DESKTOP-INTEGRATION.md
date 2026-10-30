@@ -459,3 +459,13 @@ missing. Preferred-share capital can be found under the banking `Capital` captio
 only when metadata places it beneath shareholder equity. Duplicate balance periods
 cannot establish the preferred class. Every failed price/capital check is retained;
 recognizing zero preferred capital never overrides marketcap/quote disagreement.
+
+
+### Quote comparison (v11)
+Valuation proof, shared context and evidence/export now expose canonical quote
+date/close, observed profile price, cap/shares-implied price, observation time and
+prior canonical dates matching that price. Provider quote time remains unknown
+unless actually supplied; retrieval time does not establish it. A prior-close match
+is diagnostic, not proof of lag or corporate adjustment. The valuation alignment
+gate stays intact; no silent rebasing unlocks P/E/P/B. Existing saved snapshots
+without comparison remain readable. New snapshot version forces fresh assembly.
