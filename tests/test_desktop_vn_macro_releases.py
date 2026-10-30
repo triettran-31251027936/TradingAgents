@@ -93,3 +93,17 @@ def test_irrelevant_title_or_changed_prose_does_not_produce_fake_number():
     p = post()
     p["content"]["rendered"] = "No matching quantitative statement."
     assert m.facts(m.normalize([p], "cpi", "2026-10-30", NOW)[0], "cpi") == {}
+
+
+def test_gdp_quarterly_growth_not_nine_month_average_or_target():
+    p = post("labor")
+    p["title"]["rendered"] = (
+        "Thông cáo báo chí tình hình kinh tế - xã hội quý III và 9 tháng năm 2026"
+    )
+    p["content"]["rendered"] = (
+        "Tổng sản phẩm trong nước (GDP) quý III/2026 ước tăng 9,95% so với cùng kỳ năm trước. GDP chín tháng tăng 9,01%; mục tiêu cả năm tăng 10%."
+    )
+    rows = m.normalize([p], "gdp", "2026-10-30", NOW)
+    result = m.facts(rows[0], "gdp")
+    assert result["vn_release_gdp_yoy"]["value"] == pytest.approx(0.0995)
+    assert result["vn_release_gdp_yoy"]["asof"] == "2026-Q3"

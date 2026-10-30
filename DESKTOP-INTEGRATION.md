@@ -359,3 +359,41 @@ original macro tool. Both UI and exported evidence show observation/publication
 dates; stale figures have a visible warning. Sources are cached once across stock
 jobs. No paid inference or personal credentials are needed for these public data.
 Domestic policy rates, credit and FX still require further integration/validation.
+
+### GDP, industrial production and reference FX (schema v6)
+
+GDPVNM and IIPVNM add 221 and 5 source series respectively to the earlier 48.
+The parser retains distinct frequency/base dimensions instead of rejecting all
+GDP data or taking the first/last series. An unqualified ambiguous code returns
+explicit selector choices; `vn_nsdp:<qualified-selector>` reads the chosen raw
+series. Canonical quarterly GDP and monthly IIP use explicit dimensions.
+
+The live GDP source contains 28 series with materially conflicting values under
+the same observation period and base label. Those conflicts are retained in the
+raw evidence and the affected canonical series are withheld. Conflicting periods
+are excluded from the normal observation list. Tiny duplicate numeric differences
+within relative 1e-12 are recorded and deduplicated; all originals remain in the
+raw XML. This is a declared serialization tolerance, not an audit/revision policy.
+Do not select the last row, silently relabel a price base or reconstruct real GDP
+growth from this ambiguous source.
+
+Quarterly nominal GDP is available after unit conversion from billions to VND.
+The real GDP level and derived growth remain missing while this conflict persists.
+A separate exact period-specific NSO release fact provides `vn_release_gdp_yoy`:
+Q3/2026 growth 9.95%, with publication/modification timestamps. The matching numerical
+result from selecting one duplicate is not treated as validation of that selection.
+IIP uses the 2015-base monthly index, exact 12-month/1-month comparisons and no
+seasonal adjustment. The live sample has September2026 index 223.99; derived YoY
+18.922219% and MoM 3.259266%. Observation periods and formulas are explicit.
+
+The official XML linked from Vietcombank's exchange-rate page supplies the three
+distinct USD cash-buy, transfer-buy and sell reference quotes and other currencies.
+These are not SBV central rates, interbank midpoint prices or executable quotations.
+Their source-local clock is interpreted in Asia/Ho_Chi_Minh. Parsing checks the
+numeric format, positive bid/ask values, future timestamps and duplicate currencies.
+A missing cash bid stays missing. Quotes cache for 30 minutes; raw versions and
+first-observed times are preserved for dated replay. An unobserved historical
+quote is withheld. Network errors keep the original quote/retrieval times.
+Aliases are `vn_fx_usd_cash_buy`, `vn_fx_usd_transfer_buy`, `vn_fx_usd_sell` and
+`vn_fx:<CURRENCY>`. Public SBV access was rejected and its older NSDP document links
+returned 404; no rate or central FX series is silently invented/substituted.

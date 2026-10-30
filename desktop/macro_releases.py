@@ -21,7 +21,11 @@ from desktop.vietnam import write_json
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 API = "https://www.nso.gov.vn/wp-json/wp/v2/posts"
-SEARCH = {"cpi": "chỉ số giá tiêu dùng", "labor": "thông cáo báo chí về tình hình lao động"}
+SEARCH = {
+    "cpi": "chỉ số giá tiêu dùng",
+    "labor": "thông cáo báo chí về tình hình lao động",
+    "gdp": "thông cáo báo chí tình hình kinh tế",
+}
 MONTHS = {
     "một": 1,
     "giêng": 1,
@@ -57,6 +61,8 @@ def normalize(posts, kind, asof, now):
         eligible = (
             title.lower().startswith("chỉ số giá tiêu dùng")
             if kind == "cpi"
+            else bool(re.match(r"^thông cáo báo chí.*tình hình kinh tế", title, re.I))
+            if kind == "gdp"
             else title.lower().startswith("thông cáo báo chí") and "lao động" in title.lower()
         )
         if not eligible:
@@ -156,6 +162,14 @@ def facts(record, kind):
         q = {"i": 1, "ii": 2, "iii": 3, "iv": 4}[roman]
         period = f"{year}-Q{q}"
         prefix = rf"quý\s+{roman}/{year}"
+
+        if kind == "gdp":
+            capture(
+                "vn_release_gdp_yoy",
+                rf"Tổng sản phẩm trong nước\s*\(GDP\)\s+{prefix}\s+ước(?:\s+tính)?\s+tăng\s+(?P<value>\d+(?:,\d+)?)%\s+so với cùng kỳ năm trước",
+                period,
+            )
+            return result
         capture(
             "vn_release_unemployment",
             rf"Trong\s+{prefix},\s+tỷ lệ thất nghiệp trong độ tuổi lao động là\s+(?P<value>\d+(?:,\d+)?)%",
@@ -203,6 +217,7 @@ def load(asof, cache_dir, *, now=None, session=None):
                 "formula": "Official period-specific release value unavailable; no estimate",
             }
             for name in (
+                "vn_release_gdp_yoy",
                 "vn_release_cpi_mom",
                 "vn_release_cpi_yoy",
                 "vn_release_unemployment",

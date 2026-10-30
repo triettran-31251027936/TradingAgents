@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 5
+VERSION = 6
 LOCK = threading.Lock()
 
 
@@ -587,6 +587,30 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             domestic_macro["official_releases"] = releases
             metrics.update(releases["metrics"])
             domestic_macro["warnings"].extend(releases["warnings"])
+            from desktop import fx_vietnam
+
+            try:
+                bank_fx = fx_vietnam.load(asof, cache_dir)
+            except (OSError, ValueError) as exc:
+                bank_fx = {
+                    "status": "unavailable",
+                    "currencies": {},
+                    "source_url": fx_vietnam.URL,
+                    "reason": type(exc).__name__,
+                }
+            domestic_macro["bank_fx"] = bank_fx
+            metrics.update(fx_vietnam.metrics(bank_fx, asof))
+            if bank_fx["status"] != "available":
+                domestic_macro["warnings"].append("Vietcombank FX: " + bank_fx["status"])
+            sources.append(
+                {
+                    "name": "Vietcombank reference FX",
+                    "url": fx_vietnam.URL,
+                    "retrieved_at": bank_fx.get("retrieved_at", "unavailable"),
+                    "sha256": bank_fx.get("sha256"),
+                    "status": bank_fx["status"],
+                }
+            )
             missing = [key for key, value in metrics.items() if value["value"] is None]
             warnings.extend(domestic_macro.get("warnings", []))
             for source in domestic_macro.get("sources", []) + releases.get("sources", []):

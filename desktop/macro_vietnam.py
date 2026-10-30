@@ -20,7 +20,8 @@ from desktop.vietnam import write_json
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 ROOT = "https://nsdp.nso.gov.vn/GSO-chung/SDMXFiles/GSO/"
-FILES = {"cpi": "CPIVNM.xml", "labor": "LMIVNM.xml"}
+FILES = {"cpi": "CPIVNM.xml", "labor": "LMIVNM.xml", "gdp": "GDPVNM.xml", "iip": "IIPVNM.xml"}
+DOMAINS = {"cpi": "CPI", "labor": "LMI", "gdp": "NAG", "iip": "IND"}
 LOCK = threading.Lock()
 MAX_BYTES = 8 * 1024 * 1024
 # _PT rate definitions are checked against NSO's quarterly labour press release.
@@ -28,6 +29,14 @@ MAX_BYTES = 8 * 1024 * 1024
 LABOR_REFERENCE = "https://www.nso.gov.vn/tin-tuc-thong-ke/2026/07/thong-cao-bao-chi-ve-tinh-hinh-lao-dong-viec-lam-quy-ii-va-6-thang-dau-nam-2026/"
 SERIES = {
     "vn_cpi": ("cpi", "PCPI_IX", "Vietnam CPI index", "index"),
+    "vn_nominal_gdp": ("gdp", "NGDP_PA_XDC", "Vietnam nominal GDP, quarterly", "VND"),
+    "vn_real_gdp": (
+        "gdp",
+        "NGDP_R_PA_XDC",
+        "Vietnam real GDP, quarterly, 2010 prices",
+        "VND at 2010 prices",
+    ),
+    "vn_iip": ("iip", "AIP_ISIC4_IX", "Vietnam industrial production index, 2015 base", "index"),
     "vn_labor_force": ("labor", "LLF_PE_NUM", "Vietnam labour force, age 15+", "persons"),
     "vn_employment": ("labor", "LE_PE_NUM", "Vietnam employed persons, age 15+", "persons"),
     "vn_unemployment": ("labor", "LUR_PT", "Vietnam working-age unemployment rate", "percent"),
@@ -44,6 +53,35 @@ SERIES = {
         "percent",
     ),
 }
+
+
+DIMENSIONS = {
+    "vn_cpi": {"FREQ": "M"},
+    **{
+        alias: {"FREQ": "Q"}
+        for alias in (
+            "vn_labor_force",
+            "vn_employment",
+            "vn_unemployment",
+            "vn_youth_unemployment",
+            "vn_underemployment",
+        )
+    },
+    "vn_nominal_gdp": {"FREQ": "Q", "BASE_PER": "_Z"},
+    "vn_real_gdp": {"FREQ": "Q", "BASE_PER": "2010"},
+    "vn_iip": {"FREQ": "M", "BASE_PER": "2015"},
+}
+FRESHNESS = {"M": 62, "Q": 110, "A": 450}
+
+
+def select_series(source, code, dimensions=None):
+    rows = [
+        entry
+        for entry in source.values()
+        if entry["indicator"] == code
+        and all(entry["dimensions"].get(key) == value for key, value in (dimensions or {}).items())
+    ]
+    return rows[0] if len(rows) == 1 else None
 
 
 def period_end(value, freq):
@@ -71,6 +109,7 @@ def parse_xml(raw, asof, observed_at):
     if stamp.tzinfo is None or stamp > observed_at:
         raise ValueError("Future or unzoned SDMX preparation time")
     result = {}
+    dimension_keys = set()
     for series in root.iter():
         if series.tag.rsplit("}", 1)[-1] != "Series" or series.get("REF_AREA") != "VN":
             continue
@@ -78,18 +117,30 @@ def parse_xml(raw, asof, observed_at):
         freq = series.get("FREQ")
         if not code or freq not in ("M", "Q", "A"):
             continue
-        if code in result:
-            raise ValueError("Ambiguous SDMX indicator dimensions/base period")
+        dimensions = tuple(sorted(series.attrib.items()))
+        if dimensions in dimension_keys:
+            raise ValueError("Duplicate SDMX series dimensions")
+        dimension_keys.add(dimensions)
+        qualified = (
+            code
+            + "|"
+            + "|".join(
+                key + "=" + value
+                for key, value in sorted(series.attrib.items())
+                if key not in ("INDICATOR", "REF_AREA", "DATA_DOMAIN")
+            )
+        )
+        if qualified in result:
+            raise ValueError("Ambiguous SDMX series selector")
         rows = []
-        seen = set()
+        seen = {}
+        duplicates = {}
+        conflicts = {}
         for item in series:
             if item.tag.rsplit("}", 1)[-1] != "Obs":
                 continue
             key = item.get("TIME_PERIOD", "")
             end = period_end(key, freq)
-            if key in seen:
-                raise ValueError("Duplicate SDMX observation period")
-            seen.add(key)
             if end > asof:
                 continue
             try:
@@ -98,6 +149,13 @@ def parse_xml(raw, asof, observed_at):
                 continue
             if not math.isfinite(value):
                 continue
+            if key in seen:
+                previous = seen[key]
+                duplicates.setdefault(key, [previous["attributes"]]).append(dict(item.attrib))
+                if not math.isclose(value, previous["raw_value"], rel_tol=1e-12, abs_tol=0):
+                    conflicts[key] = duplicates[key]
+                continue
+            seen[key] = {"raw_value": value, "attributes": dict(item.attrib)}
             rows.append(
                 {
                     "period": key,
@@ -107,16 +165,25 @@ def parse_xml(raw, asof, observed_at):
                 }
             )
         rows.sort(key=lambda row: row["period_end"])
-        result[code] = {
+        result[qualified] = {
             "indicator": code,
             "frequency": freq,
             "dimensions": dict(series.attrib),
             "prepared_at": prepared,
-            "observations": rows,
+            "observations": [row for row in rows if row["period"] not in conflicts],
+            "numeric_duplicate_observations": duplicates,
+            "conflicting_observations": conflicts,
         }
     if not result:
         raise ValueError("No VN SDMX series")
-    return result
+    counts = {
+        entry["indicator"]: sum(item["indicator"] == entry["indicator"] for item in result.values())
+        for entry in result.values()
+    }
+    return {
+        (entry["indicator"] if counts[entry["indicator"]] == 1 else key): entry
+        for key, entry in result.items()
+    }
 
 
 def fetch(kind, cache_dir, asof, now, session):
@@ -162,7 +229,11 @@ def fetch(kind, cache_dir, asof, now, session):
             finally:
                 response.close()
             raw = b"".join(chunks)
-            parse_xml(raw, asof, now)
+            parsed = parse_xml(raw, asof, now)
+            if any(
+                entry["dimensions"].get("DATA_DOMAIN") != DOMAINS[kind] for entry in parsed.values()
+            ):
+                raise ValueError("SDMX source domain mismatch")
             digest = hashlib.sha256(raw).hexdigest()
             path = folder / (digest + ".xml")
             record_path = folder / (digest + ".snapshot.json")
@@ -204,11 +275,16 @@ def fetch(kind, cache_dir, asof, now, session):
 
 
 def normalize(alias, series, source, asof):
+    if series.get("conflicting_observations"):
+        raise ValueError(
+            "Conflicting values for the same SDMX period/base; series withheld, no last-row choice"
+        )
     title, unit = SERIES[alias][2:]
     dim = series["dimensions"]
     raw_multiplier = dim.get("UNIT_MULT")
-    if unit == "persons":
-        if raw_multiplier not in ("0", "3", "6"):
+    if unit == "persons" or unit.startswith("VND"):
+        allowed = ("0", "3", "6") if unit == "persons" else ("0", "3", "6", "9", "12")
+        if raw_multiplier not in allowed:
             raise ValueError("Unknown population multiplier")
         factor = 10 ** int(raw_multiplier)
     else:
@@ -226,12 +302,19 @@ def normalize(alias, series, source, asof):
     rows = []
     for row in series["observations"]:
         value = row["raw_value"] * factor
-        if value < 0 or unit == "index" and value == 0 or unit == "percent" and value > 100:
+        if (
+            not math.isfinite(value)
+            or value < 0
+            or unit == "index"
+            and value == 0
+            or unit == "percent"
+            and value > 100
+        ):
             raise ValueError("Invalid non-negative/count/percent observation")
         rows.append({**row, "value": value})
     latest = rows[-1] if rows else None
     age = (asof - date.fromisoformat(latest["period_end"])).days if latest else None
-    lagging = age is not None and age > (62 if series["frequency"] == "M" else 110)
+    lagging = age is not None and age > FRESHNESS[series["frequency"]]
     return {
         "status": ("stale" if lagging else "available") if latest else "missing",
         "title": title,
@@ -247,12 +330,12 @@ def normalize(alias, series, source, asof):
         "dimensions": dim,
         "unit_multiplier_applied": factor,
         "age_days": age,
-        "freshness_policy": "lagging if month period end >62 days or quarter period end >110 days; not an official publication calendar",
+        "freshness_policy": "lagging if month >62 days, quarter >110 days or year >450 days from period end; not an official publication calendar",
         "latest": latest,
         "observations": rows,
         "warnings": warnings,
         "base_period": dim.get("BASE_PER"),
-        "scope": "Official VN series; do not infer all-age unemployment from working-age rates or mix these populations",
+        "scope": "Official VN series; population, frequency and price bases must match. GDP adjustment is not established by these dimensions; do not call growth seasonally adjusted/SAAR or mix annual and quarterly observations.",
     }
 
 
@@ -281,15 +364,26 @@ def load(asof, cache_dir, *, now=None, session=None):
     }
     for kind, source in sources.items():
         output["sources"].append({k: v for k, v in source.items() if k != "series"})
+        conflicts = sum(
+            bool(row.get("conflicting_observations")) for row in source.get("series", {}).values()
+        )
+        if conflicts:
+            output["warnings"].append(
+                f"{kind}: {conflicts} series have conflicting observations under identical period/base dimensions; canonical values withheld"
+            )
         if source.get("status") != "available":
             output["warnings"].append(kind + ": " + source.get("reason", source["status"]))
     for alias, (kind, code, *_) in SERIES.items():
         source = sources[kind]
-        series = source.get("series", {}).get(code)
+        series = select_series(source.get("series", {}), code, DIMENSIONS.get(alias))
         if not series:
             output["series"][alias] = {
-                "status": source.get("status", "missing"),
-                "reason": source.get("reason", "Indicator absent"),
+                "status": source.get("status")
+                if source.get("status") not in ("available", "cached_source_error")
+                else "missing",
+                "reason": source.get(
+                    "reason", "Indicator absent or frequency/base dimensions ambiguous"
+                ),
                 "latest": None,
             }
             continue
@@ -298,40 +392,62 @@ def load(asof, cache_dir, *, now=None, session=None):
         except ValueError as exc:
             normalized = {"status": "unavailable", "reason": str(exc), "latest": None}
         output["series"][alias] = normalized
+        if normalized.get("status") == "unavailable":
+            output["warnings"].append(alias + ": " + normalized.get("reason", "unavailable"))
         if normalized.get("status") == "stale":
             output["warnings"].append(
                 alias + ": stale source period " + normalized["latest"]["period"]
             )
-    cpi = output["series"]["vn_cpi"]
-    for alias, offset in [("vn_cpi_yoy", 12), ("vn_cpi_mom", 1)]:
-        by_period = {r["period"]: r for r in cpi.get("observations", [])}
-        rows = []
-        for row in by_period.values():
-            year, month = map(int, row["period"].split("-"))
-            n = year * 12 + month - 1 - offset
-            prior = by_period.get(f"{n // 12:04d}-{n % 12 + 1:02d}")
-            if prior and prior["value"] > 0:
-                rows.append(
-                    {
-                        **row,
-                        "value": (row["value"] / prior["value"] - 1) * 100,
-                        "prior_period": prior["period"],
-                    }
-                )
-        output["series"][alias] = {
-            **cpi,
-            "title": "Vietnam CPI " + ("YoY" if offset == 12 else "MoM"),
-            "unit": "percent",
-            "formula": f"(same-base CPI / CPI {offset} months earlier - 1) * 100",
-            "observations": rows,
-            "latest": rows[-1] if rows else None,
-        }
+    for alias, source_alias, offset, freq in [
+        ("vn_cpi_yoy", "vn_cpi", 12, "M"),
+        ("vn_cpi_mom", "vn_cpi", 1, "M"),
+        ("vn_iip_yoy", "vn_iip", 12, "M"),
+        ("vn_iip_mom", "vn_iip", 1, "M"),
+        ("vn_real_gdp_yoy", "vn_real_gdp", 4, "Q"),
+    ]:
+        source = output["series"][source_alias]
+        output["series"][alias] = change(source, offset, freq, alias)
     output["raw_series"] = {
         code: {**series, "source_url": sources[kind]["url"]}
         for kind in FILES
         for code, series in sources[kind].get("series", {}).items()
     }
     return output
+
+
+def change(source, offset, freq, title):
+    by_period = {row["period"]: row for row in source.get("observations", [])}
+    rows = []
+    for row in by_period.values():
+        year, part = map(
+            int,
+            re.fullmatch(
+                r"(\d{4})-(\d{2})" if freq == "M" else r"(\d{4})-Q([1-4])", row["period"]
+            ).groups(),
+        )
+        count = 12 if freq == "M" else 4
+        prior_index = year * count + part - 1 - offset
+        prior_period = f"{prior_index // count:04d}-" + (
+            f"{prior_index % count + 1:02d}" if freq == "M" else f"Q{prior_index % count + 1}"
+        )
+        prior = by_period.get(prior_period)
+        if prior and prior["value"] > 0:
+            rows.append(
+                {
+                    **row,
+                    "value": (row["value"] / prior["value"] - 1) * 100,
+                    "prior_period": prior_period,
+                }
+            )
+    return {
+        **source,
+        "title": title,
+        "unit": "percent",
+        "formula": f"(same-base, same-frequency level / level {offset} periods earlier - 1)*100; not seasonally adjusted or annualized",
+        "observations": rows,
+        "latest": rows[-1] if rows else None,
+        "status": source["status"] if rows else "missing",
+    }
 
 
 def summary(bundle):
@@ -350,6 +466,10 @@ def tool(bundle, indicator, asof, look_back_days=None):
     if type(days) is not int or not 1 <= days <= 36500:
         raise ValueError("Invalid macro lookback")
     start = (date.fromisoformat(asof) - timedelta(days=days)).isoformat()
+    if indicator.startswith("vn_fx_") or indicator.startswith("vn_fx:"):
+        from desktop.fx_vietnam import tool as fx_tool
+
+        return fx_tool(bundle.get("bank_fx", {}), indicator)
     if indicator.startswith("vn_release_"):
         release = bundle.get("official_releases", {})
         metric = release.get("metrics", {}).get(indicator)
@@ -368,10 +488,25 @@ def tool(bundle, indicator, asof, look_back_days=None):
     if indicator.startswith("vn_nsdp:"):
         series = bundle.get("raw_series", {}).get(indicator.split(":", 1)[1])
         if not series:
-            return json.dumps({"status": "unsupported", "reason": "Unknown VN NSDP indicator"})
+            code = indicator.split(":", 1)[1]
+            choices = [
+                key
+                for key, entry in bundle.get("raw_series", {}).items()
+                if entry["indicator"] == code
+            ]
+            return json.dumps(
+                {
+                    "status": "ambiguous" if choices else "unsupported",
+                    "reason": "Select explicit frequency/base dimensions"
+                    if choices
+                    else "Unknown VN NSDP indicator",
+                    "choices": choices,
+                }
+            )
         result = {
             **series,
-            "scope": "Raw source values and dimensions; not normalized. Check unit multiplier and definition before using.",
+            "status": "ambiguous" if series.get("conflicting_observations") else "available",
+            "scope": "Raw source values and dimensions; not normalized. Check unit multiplier and definition before using. Conflicting observations are retained separately and must not be treated as a validated single value.",
         }
     else:
         series = bundle.get("series", {}).get(indicator)
@@ -411,6 +546,8 @@ def metrics(bundle):
             value = value / 100 if value is not None else None
             unit = "fraction"
             formula += "; raw percent divided by 100"
+        if entry.get("reason"):
+            formula += "; " + entry["reason"]
         formula += (
             "; source status "
             + entry["status"]
