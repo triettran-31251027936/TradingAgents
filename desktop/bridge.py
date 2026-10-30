@@ -555,12 +555,23 @@ def dispatch(action, payload):
         raise ValueError("Thao tác Subscription không hợp lệ.")
     if action == "meta":
         import tradingagents
+        from desktop.profiles import BALANCED_BUDGET, balanced_routes
         from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
 
         return {
             "version": tradingagents.__version__,
             "config": cfg,
             "roles": ROLES,
+            "routing_presets": {
+                "balanced_three": {
+                    "routes": balanced_routes(True, ROLES),
+                    "budget": BALANCED_BUDGET,
+                },
+                "balanced_two": {
+                    "routes": balanced_routes(False, ROLES),
+                    "budget": BALANCED_BUDGET,
+                },
+            },
             "providers": sorted(set(MODEL_OPTIONS) | {"codex_cli", "agy_cli"}),
             "models": {
                 name: MODEL_OPTIONS.get(name, {})

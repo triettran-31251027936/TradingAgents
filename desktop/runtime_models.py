@@ -135,8 +135,12 @@ class Runtime:
             else 400
         )
         spec = self.cfg.get("desktop_role_models", {}).get(role, {})
-        if spec.get("provider") == "deepseek" and self.cfg.get("desktop_budget", {}).get("enabled"):
-            words = 160
+        if (
+            spec.get("provider") == "deepseek"
+            and self.cfg.get("desktop_budget", {}).get("enabled")
+            and self.cfg["desktop_budget"].get("deepseek_max_output_tokens", 1024) <= 1024
+        ):
+            words = min(words, 160)
         text = f"Write concise evidence-based output, target at most {words} words. Preserve all required schema fields, figures, units, sources and limitations. Do not repeat the full upstream reports. "
         if self.quant and role != "Memory Log":
             from desktop.vietnam import capsule

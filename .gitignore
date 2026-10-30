@@ -237,3 +237,4 @@ reports/
 /.claude/settings.local.json
 /config/desktop.json
 /config/desktop.json.tmp
+/config/desktop.before-*.json

@@ -20,39 +20,39 @@
   },
   "desktop_budget": {
     "enabled": true,
-    "deepseek_max_requests": 1,
-    "deepseek_max_output_tokens": 1024,
-    "deepseek_in_backtest": false
+    "deepseek_max_requests": 24,
+    "deepseek_max_output_tokens": 2048,
+    "deepseek_in_backtest": true
   },
   "desktop_role_models": {
     "Market Analyst": {
-      "provider": "codex_cli",
-      "model": "gpt-6-luna",
-      "effort": "medium"
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "max_tokens": 2048
     },
     "Sentiment Analyst": {
       "provider": "agy_cli",
       "model": "gemini-3.8-flash-high"
     },
     "News Analyst": {
-      "provider": "codex_cli",
-      "model": "gpt-6-luna",
-      "effort": "medium"
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "max_tokens": 2048
     },
     "Fundamentals Analyst": {
-      "provider": "codex_cli",
-      "model": "gpt-6-luna",
-      "effort": "medium"
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "max_tokens": 2048
     },
     "Bull Researcher": {
-      "provider": "codex_cli",
-      "model": "gpt-6.1-sol",
-      "effort": "low"
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "max_tokens": 2048
     },
     "Bear Researcher": {
       "provider": "deepseek",
       "model": "deepseek-flash",
-      "max_tokens": 1024
+      "max_tokens": 2048
     },
     "Research Manager": {
       "provider": "codex_cli",
@@ -85,9 +85,9 @@
       "effort": "high"
     },
     "Memory Log": {
-      "provider": "codex_cli",
-      "model": "gpt-6-luna",
-      "effort": "medium"
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "max_tokens": 2048
     }
   }
 }

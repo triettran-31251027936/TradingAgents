@@ -21,16 +21,14 @@ and `outputs/`. Never commit credentials or personal reports.
 
 ## Models
 
-The latest installed profile prioritizes Codex to protect the user's small DeepSeek API balance. Requested IDs:
+The latest user-selected profile balances the two primary providers:
+**6 Codex roles, 6 DeepSeek roles, 1 Antigravity role**.
 
 | Roles | Backend | Requested model |
 |---|---|---|
-| Market, News, Fundamentals, Memory reflection | Codex CLI | gpt-6-luna, medium effort |
-| Bull, Trader, three Risk roles | Codex CLI | gpt-6.1-sol, low/medium effort |
-| Research Manager | Codex CLI | gpt-6.1-sol, medium effort |
-| Portfolio Manager | Codex CLI | gpt-6.1-sol, high effort |
+| Research Manager, Trader, three Risk roles, Portfolio Manager | Codex CLI | gpt-6.1-sol; high effort for PM, medium/low for other roles |
+| Market, News, Fundamentals, Bull, Bear, Memory reflection | DeepSeek API | deepseek-flash (V4.1 Flash alias), max output2048, no SDK retry |
 | Sentiment with context readback | agy CLI | gemini-3.8-flash-high |
-| Bear only | DeepSeek API | deepseek-flash, max output 1024 tokens, SDK retries disabled |
 
 
 CLI processes use their own existing sign-ins. Financial tools are requested
@@ -154,9 +152,9 @@ mutating actions require fresh engine metadata. Optional subscription status
 is loaded when Settings is opened, rather than blocking startup. Idle bridge
 children are cancelled on quit; quick requests have a bounded timeout.
 
-## Small paid-API budget (latest user preference)
+## Previous small paid-API preference (historical)
 
-The active plan is 11 Codex roles, 1 Antigravity role and 1 DeepSeek role.
+The previous plan was 11 Codex roles, 1 Antigravity role and 1 DeepSeek role. It has been superseded by the balanced profile below.
 DeepSeek is limited to one Bear call per analysis, with 1024 output tokens and
 SDK retries disabled. Exact cache hits do not consume the request limit; failed
 attempts do. The runtime rejects further paid attempts before invoking the
@@ -223,3 +221,24 @@ keys/settings in the installed app now updates the Application Support runtime.
 Source validation scripts run against their own checkout and do not overwrite
 this runtime state. Report paths displayed in the installed app refer to the
 staged runtime.
+
+## Current balanced profile
+
+The user requested equal Codex/DeepSeek allocation after the earlier 11/1 split.
+The installed runtime, example profile and UI presets now use 6 Codex /6 DeepSeek
+/1 Antigravity. A lightweight shared preset in desktop/profiles.py is exposed
+through bridge metadata, preventing the UI from restoring the retired one-Bear
+allocation. Saving role assignments also saves the visible request/token limits.
+
+The paid request cap is24 per analysis, max output2048 tokens/request, with SDK
+retries disabled. This accommodates three analysts' tool loops, two research
+turns and a reflection at the configured six-tool-round limit. Actual usage
+can differ: Memory only calls a model when due, tool rounds vary and multiple
+reflections may hit the cap. Equal role counts do not imply equal token counts,
+latency or financial cost. No dollar balance is inferred.
+
+The same model distribution is enabled for backtest; the request cap is per
+cell, so a grid can spend more in total. Users can uncheck paid backtesting or
+choose the Codex+Antigravity preset. This update changes configuration only; no
+paid inference validation was run to apply the new split. Prior real-run reports
+retain their original requested-model metadata and are not relabelled.
