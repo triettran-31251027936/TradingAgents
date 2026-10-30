@@ -6,6 +6,7 @@ numeric claims. They do not certify the semantic truth of an LLM inference.
 
 from __future__ import annotations
 
+import math
 import re
 
 from pydantic import BaseModel, Field
@@ -141,14 +142,34 @@ def validate(report, bundle, messages):
     if sparse and report.confidence != "low":
         raise ValueError("Antigravity overstated confidence for sparse/unavailable sources.")
     text = report.narrative + "\n" + "\n".join(c.claim for c in report.evidence_claims)
-    # This role has no independently verified PE/PB/ROE/EPS valuation series.
-    unsupported = re.search(
-        r"\b(?:P\s*/\s*[EB]|ROE|EPS\s*TTM)\s*(?:(?:là|khoảng|=|:)\s*)?[−-]?\d", text, re.I
-    )
-    if unsupported:
-        raise ValueError(
-            "Antigravity inserted an unsupported valuation figure; remove it or explicitly report missing data."
+    # A current canonical value can now be supplied, including derived values
+    # with an explicit share basis. Allow sourced readback with rounding, never
+    # a new ratio, invented EPS TTM, incorrect units or a different figure.
+    cited = {sid for claim in report.evidence_claims for sid in claim.source_ids}
+    for match in re.finditer(
+        r"\b(?P<label>P\s*/?\s*[EB]|ROE|EPS\s*TTM)\s*(?:(?:là|khoảng|=|:)\s*)?(?P<value>[−-]?\d+(?:[.,]\d+)?)(?P<pct>\s*%)?",
+        text,
+        re.I,
+    ):
+        label = re.sub(r"[\s/]", "", match["label"]).upper()
+        alias = {"PE": "pe_ttm", "PB": "pb", "ROE": "roe_ttm"}.get(label)
+        metric = bundle["metrics"].get(alias, {})
+        expected_value = metric.get("value")
+        shown = match["value"].replace("−", "-").replace(",", ".")
+        scale = 100 if match["pct"] else 1
+        digits = len(shown.split(".")[1]) if "." in shown else 0
+        tolerance = 0.5 * 10 ** (-digits) / scale
+        supported = (
+            alias is not None
+            and expected_value is not None
+            and "metric:" + alias in cited
+            and not (label in ("PE", "PB") and match["pct"])
+            and math.isclose(float(shown) / scale, expected_value, rel_tol=1e-10, abs_tol=tolerance)
         )
+        if not supported:
+            raise ValueError(
+                "Antigravity inserted an unsupported valuation figure; cite the canonical metric with matching value/units or explicitly report missing data."
+            )
     marker = "### Kiểm tra nguồn đầu vào"
     if marker not in report.narrative:
         appendix = (

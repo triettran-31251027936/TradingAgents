@@ -582,3 +582,47 @@ P&L, and five price sessions cannot establish valuation or credit quality. A sec
 live sample respected these distinctions. A final sample also verified forwarding
 the configured Vietnamese output language while preserving the synthetic label.
 These are bounded acceptance samples, not a general guarantee of LLM reasoning.
+
+## VSDC registered-share reconciliation and valuation, snapshot v13
+
+The adapter now uses VSDC's public stock search to obtain the actual detail link;
+the identifier in another autocomplete API is not that link's identifier. It
+requires an exact active stock ticker, matching registry identity/type, positive
+integer count/par value, sequential complete registration history, and a history
+sum and total matching the current registered count. Public CSRF/session material
+is removed from archived HTML. VCB, FPT and HPG real-source lookups passed.
+
+Registered securities alone are not shares outstanding or free float. A separate
+valuation path requires a current observed registry and company profile for the
+same ticker/date, matching broker issued/market-cap share counts, registered count
+times par reconciled to the latest published charter capital, explicitly zero
+reported treasury and preferred capital under shareholder equity, and no
+registration change after that statement. The reconciliation retains publication,
+observation and effective dates. It cannot exclude undisclosed post-statement
+buybacks; the result is explicitly a latest-reported common-share basis.
+
+Only after those checks can market value be calculated independently as canonical
+completed close times the reconciled count. P/E uses reconciled parent profit TTM;
+P/B uses parent-attributable equity at TTM end. The provider market cap is not
+silently rebased, its quote mismatch remains visible, and its P/E/P/B/ROE comparison
+values remain withheld when their original price/period basis is not aligned.
+The dedicated status is `derived_from_reconciled_share_snapshot`, rather than a
+claim that the provider's mismatched valuation was verified.
+
+The real VCB v13 pipeline on 2026-10-30 passed the share checks against VSDC:
+8,355,675,094 registered shares, par 10,000 VND, latest registration 2025-04-15,
+and 2026-Q2 reported charter/treasury/preferred capital. At the canonical 56,300
+VND close, independently calculated market value is 470,424,507,792,200 VND,
+P/E 11.2951424 and P/B 1.8937766. The provider's 57,200 VND price mismatch is
+preserved. Values available increased to 99/122, with 17 bank-inapplicable metrics
+and six withheld/missing values. This is source/math/context acceptance, not a
+new LLM investment decision. All 12 model-facing prompts include the share basis,
+limitations and canonical fingerprint. No LLM token usage was required.
+
+Current registry pages cannot be backdated into historical runs without a snapshot
+observed by the requested date. Conflicts, missing treasury/preferred fields,
+post-statement registration changes, stale observation dates and refresh failures
+cannot unlock the independent valuation path. UI/export evidence describes the
+share basis. Antigravity may repeat a canonical P/E/P/B/ROE only with the metric
+source ID and matching value/units (rounding allowed); invented ratios/EPS TTM
+remain rejected. The 1,787-test suite and 104 subtests passed.

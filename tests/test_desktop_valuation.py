@@ -12,6 +12,117 @@ from desktop.vietnam import field
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
+def independent_fixture():
+    book, raw = fixture()
+    section = book["balance"]
+    section["fields"]["treasury"] = "Treasury shares"
+    section["field_metadata"].update(capital={"parent": "equity"}, treasury={"parent": "capital"})
+    for row in section["quarters"]:
+        row.update(capital=1000, treasury=0)
+    profile = {
+        "status": "available",
+        "ticker": "AAA.VN",
+        "observed_at": "2026-03-02T10:00:00+07:00",
+        "market": {
+            "numberOfSharesMktCap": 100,
+            "issueShare": 100,
+            "currentPrice": 11,
+            "marketCap": 1100,
+        },
+    }
+    registry = {
+        "status": "available",
+        "ticker": "AAA.VN",
+        "observed_at": profile["observed_at"],
+        "registered_shares": 100,
+        "par_value_vnd": 10,
+        "history_reconciled": True,
+        "latest_registration_date": "2025-12-01",
+        "source_url": "https://vsdc.vn/vi/s-detail/12",
+    }
+    raw["data"][0]["marketCap"] = 1100
+    return book, raw, profile, registry
+
+
+def independent_calculate(book, raw, profile, registry):
+    result = {}
+
+    def add(name, value, unit, formula, source, stamp):
+        result[name] = {"value": value, "formula": formula, "source": source}
+
+    proof = extend(
+        book,
+        [{"date": "2026-03-02", "close": 10}],
+        raw,
+        "2026-03-02",
+        datetime(2026, 3, 2, 12, tzinfo=TZ),
+        add,
+        field,
+        company_profile=profile,
+        share_registry=registry,
+    )
+    return result, proof
+
+
+def test_independent_share_basis_computes_with_canonical_price_and_retains_mismatch():
+    r, p = independent_calculate(*independent_fixture())
+    assert p["status"] == "derived_from_reconciled_share_snapshot"
+    assert not p["marketcap_price_aligned"]
+    assert p["quote_comparison"]["provider_price"] == 11
+    assert r["market_cap_at_canonical_close"]["value"] == 1000
+    assert r["pe_ttm"]["value"] == 10 and r["pb"]["value"] == pytest.approx(1000 / 600)
+    assert r["provider_pe_ttm_observed"]["value"] is None
+    assert r["provider_pb_observed"]["value"] is None
+    assert r["registered_shares"]["value"] == 100
+    assert "registration/charter-reconciled" in r["market_cap_at_canonical_close"]["formula"]
+    assert "vsdc.vn" in r["pe_ttm"]["source"]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "count",
+        "treasury",
+        "treasury_missing",
+        "preferred",
+        "capital",
+        "later_registration",
+        "old_snapshot",
+        "future_publication",
+        "wrong_identity",
+        "cached_error",
+        "treasury_wrong_parent",
+    ],
+)
+def test_registry_alone_never_unlocks_unreconciled_common_equity(fault):
+    book, raw, profile, registry = independent_fixture()
+    if fault == "count":
+        registry["registered_shares"] = 101
+    elif fault == "treasury":
+        book["balance"]["quarters"][-1]["treasury"] = -10
+    elif fault == "treasury_missing":
+        book["balance"]["quarters"][-1]["treasury"] = None
+    elif fault == "preferred":
+        book["balance"]["quarters"][-1]["pref_equity"] = 1
+    elif fault == "capital":
+        book["balance"]["quarters"][-1]["capital"] = 1002
+    elif fault == "later_registration":
+        registry["latest_registration_date"] = "2026-01-01"
+    elif fault == "old_snapshot":
+        registry["observed_at"] = "2026-03-01T12:00:00+07:00"
+    elif fault == "future_publication":
+        book["balance"]["quarters"][-1]["publicDate"] = "2026-03-03"
+    elif fault == "wrong_identity":
+        registry["ticker"] = "BBB.VN"
+    elif fault == "cached_error":
+        registry["status"] = "cached_source_error"
+    elif fault == "treasury_wrong_parent":
+        book["balance"]["field_metadata"]["treasury"]["parent"] = "debt"
+    r, p = independent_calculate(book, raw, profile, registry)
+    assert r["pe_ttm"]["value"] is None and r["pb"]["value"] is None
+    assert not p["registered_share_reconciliation"]["verified"]
+
+
 def fixture():
     income = {
         "fields": {"profit": "Attributable to parent company"},

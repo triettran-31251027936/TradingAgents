@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 12
+VERSION = 13
 LOCK = threading.Lock()
 
 
@@ -207,6 +207,7 @@ def compute(
     observed_at=None,
     valuation_proof=None,
     company_profile=None,
+    share_registry=None,
 ):
     df = pd.DataFrame(rows).set_index("date")
     close = df["close"]
@@ -428,6 +429,7 @@ def compute(
         add,
         field,
         company_profile=company_profile,
+        share_registry=share_registry,
     )
     if valuation_proof is not None:
         valuation_proof.update(proof)
@@ -554,6 +556,23 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
         from desktop.company_profile import normalize as normalize_company
 
         company_profile = normalize_company(details, ticker, asof, valuation_observed_at)
+        from desktop.share_registry import load as load_registry
+
+        registry = None if prices_only else load_registry(ticker, asof, cache_dir)
+        if registry:
+            sources.append(
+                {
+                    "name": "VSDC registered-share history",
+                    "url": registry.get("source_url"),
+                    "retrieved_at": registry.get("observed_at"),
+                    "sha256": registry.get("sha256"),
+                    "status": registry["status"],
+                }
+            )
+            if registry["status"] != "available":
+                warnings.append(
+                    "VSDC share registry: " + registry.get("reason", registry["status"])
+                )
         valuation_proof = {}
         metrics, missing = compute(
             prices,
@@ -564,6 +583,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             observed_at=valuation_observed_at,
             valuation_proof=valuation_proof,
             company_profile=company_profile,
+            share_registry=registry,
         )
         from desktop.bank_metrics import extend as extend_bank
 
@@ -624,8 +644,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             metrics.update(monetary["metrics"])
             domestic_macro["warnings"].extend(monetary["warnings"])
             sources.extend(
-                {"name": "DIV published NHNN briefing", **source}
-                for source in monetary["sources"]
+                {"name": "DIV published NHNN briefing", **source} for source in monetary["sources"]
             )
             from desktop import fx_vietnam
 
@@ -753,6 +772,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             "metrics": metrics,
             "financial_reconciliation": reconciliation,
             "company_profile": company_profile,
+            "share_registry": registry,
             "valuation_observed_at": valuation_observed_at,
             "valuation_reconciliation": valuation_proof,
             "bank_reconciliation": bank_proof,

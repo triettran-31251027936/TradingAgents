@@ -3,7 +3,7 @@
 import pytest
 from langchain_core.messages import AIMessage, SystemMessage
 
-from desktop.grounding import GroundedSentimentReport, ledger, validate
+from desktop.grounding import EvidenceClaim, GroundedSentimentReport, ledger, validate
 from desktop.model_routing import RoleModel
 from desktop.runtime_models import Runtime
 
@@ -71,6 +71,33 @@ def test_verified_readback_and_receipts_are_visible():
     result, receipt = validate(report(), evidence(), source())
     assert receipt["validated"] and "Kiểm tra nguồn đầu vào" in result.narrative
     assert "news:1" in result.narrative
+
+
+@pytest.mark.parametrize(
+    "text,valid",
+    [
+        ("P/E 11,3 lần; ROE 18,03%", True),
+        ("P/E 12,3 lần", False),
+        ("P/E 11,3%", False),
+        ("ROE 18,03", False),
+        ("EPS TTM 5000", False),
+    ],
+)
+def test_canonical_valuation_readback_requires_matching_figures_and_units(text, valid):
+    q = evidence()
+    q["metrics"].update(
+        pe_ttm={"value": 11.295, "unit": "ratio"}, roe_ttm={"value": 0.1802775, "unit": "fraction"}
+    )
+    r = report(q)
+    r.narrative = text
+    r.evidence_claims.append(
+        EvidenceClaim(claim=text, source_ids=["metric:pe_ttm", "metric:roe_ttm"])
+    )
+    if valid:
+        assert validate(r, q, source())[1]["validated"]
+    else:
+        with pytest.raises(ValueError, match="unsupported valuation"):
+            validate(r, q, source())
 
 
 @pytest.mark.parametrize(

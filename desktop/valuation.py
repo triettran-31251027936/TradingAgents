@@ -6,12 +6,109 @@ calculations or as a point-in-time historical archive.
 
 from __future__ import annotations
 
-from datetime import datetime
+import calendar
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from desktop.financial_metrics import number, period, ttm
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def reconcile_registered_shares(book, registry, profile, target, asof, preferred):
+    """Reconcile a current registry count to broker counts and reported equity.
+
+    A registry count alone is not outstanding shares. This path requires no
+    subsequent registration change and explicitly zero reported treasury and
+    preferred capital. It still discloses the statement date: it cannot prove
+    that no unreported post-statement buyback occurred.
+    """
+    proof = {
+        "verified": False,
+        "scope": "Latest reported common-share basis cross-checked with current VSDC registration and broker share counts; not a guarantee against undisclosed post-statement buybacks.",
+    }
+    try:
+        if (
+            not registry
+            or registry.get("status") != "available"
+            or not registry.get("history_reconciled")
+        ):
+            raise ValueError("No available reconciled VSDC registration snapshot")
+        if registry.get("ticker") != profile.get("ticker") or profile.get("status") != "available":
+            raise ValueError("Issuer identity mismatch")
+        for record in (registry, profile):
+            stamp = datetime.fromisoformat(record["observed_at"])
+            if stamp.tzinfo is None or stamp.astimezone(TZ).date().isoformat() != asof:
+                raise ValueError("Share observations are not from the analysis date")
+        count, par = registry["registered_shares"], registry["par_value_vnd"]
+        if type(count) is not int or type(par) is not int or count <= 0 or par <= 0:
+            raise ValueError("Invalid registry count/par")
+        market = profile.get("market", {})
+        if (
+            number(market.get("issueShare")) != count
+            or number(market.get("numberOfSharesMktCap")) != count
+        ):
+            raise ValueError(
+                "VSDC count differs from current broker issued/market-cap share counts"
+            )
+        if not target:
+            raise ValueError("No reconciled statement TTM end")
+        rows = [r for r in book["balance"].get("quarters", []) if period(r) == target]
+        if len(rows) != 1:
+            raise ValueError("Missing or duplicate statement period")
+        month = target[1] * 3
+        end = date(target[0], month, calendar.monthrange(target[0], month)[1]).isoformat()
+        if not registry["latest_registration_date"] <= end <= asof:
+            raise ValueError(
+                "Registration changed after the latest statement, or statement is in the future"
+            )
+        published = date.fromisoformat(str(rows[0].get("publicDate", ""))[:10]).isoformat()
+        if not end <= published <= asof:
+            raise ValueError("Statement publication unavailable by analysis date")
+        section = book["balance"]
+        labels = {k.casefold(): v.strip().casefold() for k, v in section["fields"].items()}
+        metadata = {k.casefold(): v for k, v in section.get("field_metadata", {}).items()}
+
+        def equity_field(*titles):
+            keys = [k for k, v in section["fields"].items() if v.strip().casefold() in titles]
+            if len(keys) != 1:
+                return None
+            key, seen = keys[0].casefold(), set()
+            while key and key not in seen:
+                seen.add(key)
+                key = str(metadata.get(key, {}).get("parent", "")).casefold()
+                if labels.get(key) == "owner's equity":
+                    return keys[0]
+            return None
+
+        charter = equity_field("paid-in capital", "charter capital")
+        treasury = equity_field("treasury shares", "treasury stocks")
+        capital, treasury_value = number(rows[0].get(charter)), number(rows[0].get(treasury))
+        expected = count * par
+        tolerance = max(1, min(1_000_000, expected * 0.0001))
+        proof.update(
+            registered_shares=count,
+            par_value_vnd=par,
+            statement_period=end,
+            statement_published=rows[0].get("publicDate"),
+            charter_capital=capital,
+            treasury_capital=treasury_value,
+            preferred_capital=preferred,
+            latest_registration_date=registry["latest_registration_date"],
+            source_url=registry["source_url"],
+            observed_at=registry["observed_at"],
+            capital_rounding_tolerance_vnd=tolerance,
+        )
+        if capital is None or abs(capital - expected) > tolerance:
+            raise ValueError(
+                "Registered shares * par does not reconcile to reported charter capital"
+            )
+        if treasury_value != 0 or preferred != 0:
+            raise ValueError("Treasury/preferred capital is non-zero or unknown")
+        proof["verified"] = True
+    except (ValueError, KeyError, TypeError) as exc:
+        proof["reason"] = str(exc)
+    return proof
 
 
 def parent_equity(book, target, field):
@@ -38,7 +135,9 @@ def parent_equity(book, target, field):
     return equity - nci, f"{target[0]}-Q{target[1]} public:{str(row.get('publicDate', ''))[:10]}"
 
 
-def extend(book, prices, raw, asof, observed_at, add, field, *, company_profile=None):
+def extend(
+    book, prices, raw, asof, observed_at, add, field, *, company_profile=None, share_registry=None
+):
     profit, reconciliation, window = ttm(
         book["income"], field(book, "income", "Attributable to parent company")
     )
@@ -169,7 +268,25 @@ def extend(book, prices, raw, asof, observed_at, add, field, *, company_profile=
         note = "Preferred share capital is non-zero or unknown; common-equity valuation withheld"
         reason = reason + "; " + note if not aligned else note
     market_verified = bool(market and aligned)
-    verified = bool(market_verified and preferred == 0)
+    registry_proof = reconcile_registered_shares(
+        book, share_registry, profile, end, asof, preferred
+    )
+    independent = bool(registry_proof["verified"] and close is not None and close > 0)
+    share_conflict = bool(
+        share_registry
+        and share_registry.get("status") == "available"
+        and shares is not None
+        and share_registry.get("registered_shares") != shares
+    )
+    provider_verified = bool(market_verified and preferred == 0 and not share_conflict)
+    verified = bool(provider_verified or independent)
+    calculated_cap = close * registry_proof["registered_shares"] if independent else cap
+    if share_conflict:
+        reason = (
+            "VSDC registration count conflicts with the provider share count; valuation withheld"
+        )
+    if share_registry:
+        proof["registered_share_reconciliation"] = registry_proof
     proof.update(
         market_input_source="company_details" if use_profile else "statistics_financial",
         observed_at=observed.isoformat(),
@@ -200,8 +317,10 @@ def extend(book, prices, raw, asof, observed_at, add, field, *, company_profile=
         marketcap_price_aligned=aligned,
         preferred_capital=preferred,
         preferred_field=preferred_fields[0] if len(preferred_fields) == 1 else None,
-        status="verified_current_inputs"
-        if verified
+        status="derived_from_reconciled_share_snapshot"
+        if independent and not provider_verified
+        else "verified_current_inputs"
+        if provider_verified
         else "market_verified_valuation_withheld"
         if market_verified
         else "withheld",
@@ -217,15 +336,29 @@ def extend(book, prices, raw, asof, observed_at, add, field, *, company_profile=
         + "; matched to canonical close "
         + str(prices[-1]["date"] if prices else "?")
     )
+    derived_source = (
+        (
+            "Canonical Vietcap OHLCV close "
+            + str(prices[-1]["date"])
+            + "; "
+            + registry_proof["source_url"]
+            + " observed "
+            + registry_proof["observed_at"]
+            + "; charter/zero treasury/zero preferred as reported "
+            + registry_proof["statement_period"]
+        )
+        if independent
+        else market_source
+    )
 
-    def emit(name, value, unit, formula, *, allow=None):
+    def emit(name, value, unit, formula, *, allow=None, source=None):
         allowed = verified if allow is None else allow
         add(
             name,
             value,
             unit,
             formula if allowed else formula + "; WITHHELD: " + reason,
-            market_source,
+            source or derived_source,
             asof,
         )
 
@@ -235,23 +368,37 @@ def extend(book, prices, raw, asof, observed_at, add, field, *, company_profile=
         "shares",
         "Provider share count used in observed market capitalization; not weighted-average EPS shares",
         allow=market_verified,
+        source=market_source,
     )
+    if share_registry is not None:
+        add(
+            "registered_shares",
+            share_registry.get("registered_shares")
+            if share_registry.get("status") == "available"
+            else None,
+            "shares",
+            "Current VSDC registered securities; NOT automatically outstanding shares or free float",
+            share_registry.get("source_url", "VSDC"),
+            asof,
+        )
     emit(
         "market_cap_at_canonical_close",
-        cap if market_verified else None,
+        calculated_cap if (market_verified and not share_conflict) or independent else None,
         "VND",
-        "Observed market cap, only when cap/shares matches canonical completed close and current issuer inputs or a statistics period matching published statements",
-        allow=market_verified,
+        "Canonical completed close * registration/charter-reconciled latest-reported ordinary-share basis; no post-statement registration change; zero reported treasury/preferred; subsequent undisclosed buybacks not ruled out"
+        if independent
+        else "Observed market cap, only when cap/shares matches canonical completed close and current issuer inputs or a statistics period matching published statements",
+        allow=(market_verified and not share_conflict) or independent,
     )
     emit(
         "pe_ttm",
-        cap / profit if verified and profit is not None and profit > 0 else None,
+        calculated_cap / profit if verified and profit is not None and profit > 0 else None,
         "ratio",
         "Market cap / positive reconciled parent-attributable profit TTM; not a sum of quarterly EPS",
     )
     emit(
         "pb",
-        cap / end_equity if verified and end_equity is not None else None,
+        calculated_cap / end_equity if verified and end_equity is not None else None,
         "ratio",
         "Market cap / positive parent-attributable equity at published TTM end; preferred capital must be explicitly zero",
     )
@@ -267,12 +414,12 @@ def extend(book, prices, raw, asof, observed_at, add, field, *, company_profile=
     ]:
         add(
             name,
-            number(chosen.get(key)) if verified and comparison_aligned else None,
+            number(chosen.get(key)) if provider_verified and comparison_aligned else None,
             unit,
             "Provider-reported comparison only; methodology may differ from Python calculation; no historical availability guarantee"
             + (
                 ""
-                if verified and comparison_aligned
+                if provider_verified and comparison_aligned
                 else "; WITHHELD: provider statistics period or price basis not aligned"
             ),
             "Vietcap statistics-financial observed " + observed.isoformat(),
