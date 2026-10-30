@@ -34,6 +34,8 @@ def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper
     quant = None
     store = None
     book = None
+    # This key belongs to one prepared run, never to persistent user settings.
+    graph.config.pop("desktop_paper_context_fingerprint", None)
     if cfg.get("desktop_vietnam", {}).get("enabled") and vietnam.is_vietnam(ticker):
         emit(
             "progress",
@@ -66,6 +68,10 @@ def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper
 
             store = Store(cfg["data_cache_dir"])
             book = store.snapshot()
+            # Approval fingerprints intentionally omit orders. Checkpoints need
+            # the entire model-visible book, including pending/unapproved orders
+            # and settlement availability even when cash/total positions match.
+            graph.config["desktop_paper_context_fingerprint"] = vietnam.digest(book)
             portfolio = PortfolioContext(
                 cash=book["available_cash"],
                 currency="VND",

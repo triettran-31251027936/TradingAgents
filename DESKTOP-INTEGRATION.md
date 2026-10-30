@@ -469,3 +469,16 @@ unless actually supplied; retrieval time does not establish it. A prior-close ma
 is diagnostic, not proof of lag or corporate adjustment. The valuation alignment
 gate stays intact; no silent rebasing unlocks P/E/P/B. Existing saved snapshots
 without comparison remain readable. New snapshot version forces fresh assembly.
+
+
+### Paper-account identity on checkpoint recovery
+Desktop preparation adds a run-local `desktop_paper_context_fingerprint` computed
+from the complete model-visible practice snapshot, including pending/unapproved
+orders and settlement availability. Original checkpoint settings signatures include
+this field, so a changed book cannot resume reports from a different account
+context even when available cash and total holdings are unchanged. Identical
+books still resume. The field is removed before preparing another context; explicit
+portfolios/backtests do not inherit an earlier virtual-account identity. This does
+not change the approval fingerprint, HMAC, native dialog or execution rules.
+Tests exercise actual SQLite crash/recovery with deterministic stand-in nodes;
+they verify lifecycle/context isolation, not real LLM reasoning or all graph nodes.

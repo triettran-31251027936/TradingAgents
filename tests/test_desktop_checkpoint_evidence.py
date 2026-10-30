@@ -20,7 +20,7 @@ class State(TypedDict):
     final_trade_decision: str
 
 
-def graph(tmp_path, monkeypatch, control, fingerprint, model="model-a"):
+def graph(tmp_path, monkeypatch, control, fingerprint, model="model-a", paper_book=None):
     g = object.__new__(TradingAgentsGraph)
     g.config = {
         "checkpoint_enabled": True,
@@ -65,13 +65,34 @@ def graph(tmp_path, monkeypatch, control, fingerprint, model="model-a"):
     }
     monkeypatch.setattr(integration.vietnam, "load", lambda *a, **kw: deepcopy(q))
     monkeypatch.setattr(integration, "apply_role_models", lambda *a, **kw: None)
-    integration.prepare(g, "VCB.VN", "2026-10-30", None, g.config, [], lambda *a: None)
+    if paper_book is not None:
+        import desktop.practice
+
+        class Store:
+            def __init__(self, *args):
+                pass
+
+            def snapshot(self):
+                return deepcopy(paper_book)
+
+        monkeypatch.setattr(desktop.practice, "PracticeStore", Store)
+        g.config["desktop_vietnam"]["paper_enabled"] = True
+    _, _, g.prepared_portfolio, _ = integration.prepare(
+        g,
+        "VCB.VN",
+        "2026-10-30",
+        None,
+        g.config,
+        [],
+        lambda *a: None,
+        allow_paper=paper_book is not None,
+    )
     return g
 
 
 def run(g):
     state = {}
-    with g.checkpoint_scope("VCB.VN", "2026-10-30", "stock") as tid:
+    with g.checkpoint_scope("VCB.VN", "2026-10-30", "stock", g.prepared_portfolio) as tid:
         initial = {"market_report": "", "final_trade_decision": ""}
         for _, chunk in g.stream_run(
             g.checkpoint_input(initial), config={"configurable": {"thread_id": tid}}
@@ -120,3 +141,72 @@ def test_changed_evidence_or_model_cannot_resume_old_reports(tmp_path, monkeypat
         "snapshot-b" if change == "snapshot" else "snapshot-a"
     )
     assert checkpoint_step(tmp_path, "VCB.VN", "2026-10-30", old_signature) is not None
+
+
+def paper_book():
+    return {
+        "cash": 3000000,
+        "available_cash": 3000000,
+        "nav": 3000000,
+        "positions": {},
+        "orders": [],
+        "max_position_fraction": 1,
+        "commission": 0.0015,
+        "mode": "test-practice",
+        "clock": "2026-10-30",
+        "fingerprint": "same-approval-fingerprint",
+    }
+
+
+def test_new_pending_order_invalidates_resume_even_with_same_portfolio(tmp_path, monkeypatch):
+    control = {"analyst": 0, "manager": 0, "fail": True}
+    book = paper_book()
+    first = graph(tmp_path, monkeypatch, control, "snapshot-a", paper_book=book)
+    signature = first._run_signature("stock", first.prepared_portfolio)
+    with pytest.raises(RuntimeError, match="Controlled PM"):
+        run(first)
+    changed = deepcopy(book)
+    changed["orders"] = [
+        {"id": "pending-fixture", "status": "PENDING_APPROVAL", "approved_at": None}
+    ]
+    control["fail"] = False
+    fresh = graph(tmp_path, monkeypatch, control, "snapshot-a", paper_book=changed)
+    assert fresh.prepared_portfolio.fingerprint() == first.prepared_portfolio.fingerprint()
+    assert fresh._run_signature("stock", fresh.prepared_portfolio) != signature
+    run(fresh)
+    assert control["analyst"] == 2
+    assert book["fingerprint"] == changed["fingerprint"]
+    assert checkpoint_step(tmp_path, "VCB.VN", "2026-10-30", signature) is not None
+
+
+def test_identical_paper_book_resumes_without_repeating_analysis(tmp_path, monkeypatch):
+    control = {"analyst": 0, "manager": 0, "fail": True}
+    book = paper_book()
+    first = graph(tmp_path, monkeypatch, control, "snapshot-a", paper_book=book)
+    with pytest.raises(RuntimeError, match="Controlled PM"):
+        run(first)
+    control["fail"] = False
+    resumed = graph(tmp_path, monkeypatch, control, "snapshot-a", paper_book=deepcopy(book))
+    assert (
+        resumed.config["desktop_paper_context_fingerprint"]
+        == first.config["desktop_paper_context_fingerprint"]
+    )
+    _, state = run(resumed)
+    assert control["analyst"] == 1 and state["final_trade_decision"] == "Hold using snapshot-a"
+
+
+def test_explicit_portfolio_does_not_keep_old_paper_context_identity(tmp_path, monkeypatch):
+    control = {"analyst": 0, "manager": 0, "fail": False}
+    g = graph(tmp_path, monkeypatch, control, "snapshot-a", paper_book=paper_book())
+    assert "desktop_paper_context_fingerprint" in g.config
+    integration.prepare(
+        g,
+        "VCB.VN",
+        "2026-10-30",
+        g.prepared_portfolio,
+        g.config,
+        [],
+        lambda *a: None,
+        allow_paper=True,
+    )
+    assert "desktop_paper_context_fingerprint" not in g.config
