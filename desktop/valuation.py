@@ -175,6 +175,28 @@ def extend(book, prices, raw, asof, observed_at, add, field, *, company_profile=
         observed_at=observed.isoformat(),
         statistics_period=list(max(key for key, _ in candidates)) if candidates else None,
         statement_ttm_end=list(end) if end else None,
+        quote_comparison={
+            "canonical_date": prices[-1]["date"] if prices else None,
+            "canonical_close": close,
+            "provider_observed_at": observed.isoformat(),
+            "provider_quote_time": None,
+            "provider_price": number(market.get("currentPrice"))
+            if use_profile
+            else cap / shares
+            if shares and cap
+            else None,
+            "provider_implied_price": cap / shares if shares and cap else None,
+            "matching_prior_canonical_dates": [
+                r["date"]
+                for r in prices[-6:-1]
+                if number(r.get("close")) is not None
+                and shares
+                and cap
+                and abs(number(r["close"]) - cap / shares)
+                <= max(0.000001, (cap / shares) * 0.00001)
+            ],
+            "scope": "Observation time is not quote time. Matching a prior close does not prove lag or adjustment cause; no automatic market-cap rebasing or valuation unlock.",
+        },
         marketcap_price_aligned=aligned,
         preferred_capital=preferred,
         preferred_field=preferred_fields[0] if len(preferred_fields) == 1 else None,

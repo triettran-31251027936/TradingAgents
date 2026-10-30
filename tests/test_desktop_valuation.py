@@ -318,3 +318,14 @@ def test_multiple_valuation_failures_do_not_hide_price_mismatch():
     book["balance"]["quarters"][-1]["pref_equity"] = 10
     _, p = calculate(book, raw)
     assert "does not match" in p["reason"] and "Preferred share" in p["reason"]
+
+
+def test_price_comparison_does_not_invent_provider_quote_time_or_unlock_mismatch():
+    book, raw = fixture()
+    raw["data"][0]["marketCap"] = 2000
+    result, proof = calculate(book, raw)
+    comparison = proof["quote_comparison"]
+    assert comparison["provider_quote_time"] is None
+    assert comparison["provider_implied_price"] == 20
+    assert comparison["canonical_close"] == 10
+    assert result["pe_ttm"]["value"] is None and not proof["marketcap_price_aligned"]

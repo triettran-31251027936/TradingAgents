@@ -779,6 +779,7 @@ def capsule(bundle):
                 "currency",
                 "provider",
                 "bank_reconciliation",
+                "valuation_reconciliation",
                 "metrics",
                 "missing",
                 "warnings",
