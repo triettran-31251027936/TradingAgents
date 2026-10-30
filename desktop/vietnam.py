@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 6
+VERSION = 7
 LOCK = threading.Lock()
 
 
@@ -623,6 +623,34 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
                         "status": source["status"],
                     }
                 )
+        insider_dealings = {}
+        if not prices_only:
+            from desktop import insider_vietnam
+
+            try:
+                insider_dealings = insider_vietnam.load(ticker, asof, cache_dir)
+            except (OSError, ValueError) as exc:
+                insider_dealings = {
+                    "ticker": ticker + ".VN",
+                    "asof": asof,
+                    "source_url": insider_vietnam.URL,
+                    "source_page": f"https://cafef.vn/du-lieu/Lich-su-giao-dich-{ticker.lower()}-6.chn",
+                    "status": "unavailable",
+                    "records": [],
+                    "warnings": [type(exc).__name__],
+                }
+            metrics.update(insider_vietnam.metrics(insider_dealings))
+            missing = [key for key, value in metrics.items() if value["value"] is None]
+            warnings.extend(insider_dealings.get("warnings", []))
+            sources.append(
+                {
+                    "name": "CafeF shareholder dealings",
+                    "url": insider_vietnam.URL,
+                    "retrieved_at": insider_dealings.get("retrieved_at", "unavailable"),
+                    "sha256": insider_dealings.get("source_sha256"),
+                    "status": insider_dealings["status"],
+                }
+            )
         universe_path = folder / "symbols.json"
         universe = (
             json.loads(universe_path.read_text())
@@ -652,6 +680,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             "prices": prices,
             "benchmark": benchmark,
             "domestic_macro": domestic_macro,
+            "insider_dealings": insider_dealings,
             "statements": book,
             "metrics": metrics,
             "financial_reconciliation": reconciliation,
@@ -701,11 +730,14 @@ def capsule(bundle):
         ensure_ascii=False,
         allow_nan=False,
     )
+    decoded = json.loads(result)
     if bundle.get("domestic_macro"):
-        decoded = json.loads(result)
         decoded["domestic_macro"] = macro_summary(bundle["domestic_macro"])
-        return json.dumps(decoded, ensure_ascii=False, allow_nan=False)
-    return result
+    if bundle.get("insider_dealings"):
+        from desktop.insider_vietnam import summary as insider_summary
+
+        decoded["insider_dealings"] = insider_summary(bundle["insider_dealings"])
+    return json.dumps(decoded, ensure_ascii=False, allow_nan=False)
 
 
 @contextmanager
@@ -804,7 +836,22 @@ def vendor_scope(bundle):
             indicator, asof, look_back_days
         )
 
+    def insider(ticker, as_of_date=None):
+        guard(ticker)
+        from desktop.insider_vietnam import tool
+
+        data = bundle.get("insider_dealings")
+        if not data:
+            return json.dumps(
+                {
+                    "status": "unavailable",
+                    "scope": "No domestic insider snapshot in this saved analysis; missing coverage is not no activity",
+                }
+            )
+        return tool(data, ticker, as_of_date or bundle["analysis_date"])
+
     methods = {
+        "get_insider_transactions": insider,
         "get_macro_indicators": macro,
         "get_stock_data": prices,
         "get_indicators": indicator,

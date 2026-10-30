@@ -71,3 +71,12 @@ NSDP file observations from newer NSO release facts. Stale values carry the
 text “Nguồn chậm” in the existing warning colour; observation and publication
 dates are shown separately. Keep percent/fraction conversion explicit and
 count units labelled “người”. No new navigation or decorative financial panels.
+
+## Shareholder evidence extension
+
+Preserve the evidence table, Vietnamese numeric formatting and existing palette.
+Show dated results, ESOP and active registrations as distinct metrics, with count
+units “dòng”. A labelled disclosure opens all saved rows in a horizontally
+scrollable table; no silent preview truncation. Missing quantities remain “Không
+có dữ liệu”. Source announcement and completion dates use separate columns;
+registration errors remain visible. No new navigation or approval interactions.

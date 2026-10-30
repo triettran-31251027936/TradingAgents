@@ -57,7 +57,7 @@ and missing values. Memory reflections on other tickers do not receive the
 current ticker's quantitative capsule. Backtest uses a fresh dated scope per
 cell while retaining upstream's grid, resume and scoring behavior.
 
-Coverage limits are visible: no dedicated domestic insider or community/social
+Coverage limits are visible: no dedicated domestic community/social
 feed, incomplete domestic rates/credit/FX coverage, no guaranteed full news articles, and
 no historical vintage of revised financial statements. Yahoo, Reddit,
 StockTwits, FRED and Polymarket tools are preserved; unavailable sources are
@@ -397,3 +397,19 @@ quote is withheld. Network errors keep the original quote/retrieval times.
 Aliases are `vn_fx_usd_cash_buy`, `vn_fx_usd_transfer_buy`, `vn_fx_usd_sell` and
 `vn_fx:<CURRENCY>`. Public SBV access was rejected and its older NSDP document links
 returned 404; no rate or central FX series is silently invented/substituted.
+
+
+### Domestic shareholder dealings (v7)
+The native get_insider_transactions tool now reads all CafeF shareholder-dealing
+pages for the canonical Vietnamese ticker. Quantitative artifacts and the evidence
+page/export preserve every retained professional record; shared context contains
+summary metrics and five examples, with the original tool available for all rows.
+This aggregator feed includes insiders, related parties and other shareholders;
+it is not exchange-confirmed completeness. Registrations, dated reported results,
+ESOP/rights and unspecified mechanisms are distinct. No execution prices or VND
+notionals are invented. Undated results remain visible but outside dated subtotals;
+incomplete pagination or missing quantities withhold affected totals. Reversed
+registration windows are retained with warnings and excluded from active plans.
+The source can update results under an earlier announcement date. Historical
+queries therefore require an exact locally observed vintage no later than the
+analysis date, rather than treating registration dates as result-publication dates.

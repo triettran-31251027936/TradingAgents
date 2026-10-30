@@ -19,6 +19,7 @@ VN_METHODS = (
     "get_income_statement",
     "get_news",
     "get_macro_indicators",
+    "get_insider_transactions",
 )
 
 
@@ -102,6 +103,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "ticker": quant["ticker"],
             "company_profile": quant.get("company_profile", {}),
             "domestic_macro": quant.get("domestic_macro", {}),
+            "insider_dealings": quant.get("insider_dealings", {}),
             "quote_date": quant["prices"][-1]["date"],
             "metrics": quant["metrics"],
             "missing": quant["missing"],
@@ -182,7 +184,27 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
             )
             text += "| " + " | ".join(cell(v) for v in values) + " |\n"
         text += "\n" + "\n".join("- " + cell(v) for v in q["basis"] + q["warnings"]) + "\n"
-        text += "\nCoverage is limited to the recorded sources; missing domestic insider/social coverage is not zero activity. NSDP macro files may lag newer press releases; read each observation period and freshness warning.\n"
+        text += "\nCoverage is limited to the recorded sources; domestic shareholder-dealing coverage is aggregator-reported and distinct from exchange-confirmed results; missing social coverage is not zero sentiment. NSDP macro files may lag newer press releases; read each observation period and freshness warning.\n"
+        insider = q.get("insider_dealings") or {}
+        if insider:
+            text += "\n### Giao dịch cổ đông và người nội bộ — toàn bộ dòng nguồn đã lưu\n\n"
+            text += "Nguồn tổng hợp CafeF, chưa đối chiếu từng công bố với sở giao dịch. Đăng ký không phải kết quả; ESOP không phải mua khớp lệnh. Ngày công bố ban đầu không chứng minh ngày thị trường biết kết quả. Không có giá thực hiện.\n\n"
+            rows = insider.get("records", [])
+            text += f"Trạng thái: {cell(insider.get('status'))}. Số dòng lưu: {len(rows)}.\n\n"
+            text += "| Cá nhân / tổ chức | Vai trò | Phương thức / ghi chú | Công bố ban đầu | Kỳ đăng ký | Mua / bán đăng ký | Ngày kết thúc kết quả | Mua / bán báo cáo | Cảnh báo |\n|---|---|---|---|---|---:|---|---:|---|\n"
+            for row in rows:
+                values = (
+                    row.get("party"),
+                    row.get("role"),
+                    str(row.get("mechanism")) + " / " + str(row.get("note") or ""),
+                    row.get("source_announcement_date"),
+                    str(row.get("plan_begin")) + " → " + str(row.get("plan_end")),
+                    str(row.get("planned_buy")) + " / " + str(row.get("planned_sell")),
+                    row.get("reported_result_end"),
+                    str(row.get("reported_buy")) + " / " + str(row.get("reported_sell")),
+                    "; ".join(row.get("quality_notes", [])),
+                )
+                text += "| " + " | ".join(cell(v) for v in values) + " |\n"
         text += "\n### Quantitative context handoffs\n\n"
         for role, receipt in result.get("handoffs", {}).items():
             text += f"- {role}: {receipt['metric_count']} metrics supplied, {receipt['available_metrics']} available; snapshot {receipt['snapshot_fingerprint']}. Input verified, not a guarantee of correct interpretation.\n"
