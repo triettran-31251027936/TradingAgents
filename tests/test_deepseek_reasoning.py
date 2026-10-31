@@ -62,6 +62,20 @@ class TestDeepSeekReasoningContent:
             base_url="https://api.deepseek.com",
         )
 
+    @pytest.mark.parametrize("override", [None, 128])
+    def test_output_limit_uses_deepseek_wire_parameter(self, override):
+        client = self._client().model_copy(update={"max_tokens": 2048})
+        kwargs = {} if override is None else {"max_tokens": override}
+        payload = client._get_request_payload([HumanMessage(content="Budget check")], **kwargs)
+        assert payload["max_tokens"] == (2048 if override is None else override)
+        assert "max_completion_tokens" not in payload
+
+    def test_openai_wire_parameter_is_unchanged(self):
+        client = NormalizedChatOpenAI(model="gpt-4.1", api_key="placeholder", max_tokens=64)
+        payload = client._get_request_payload([HumanMessage(content="Budget check")])
+        assert payload["max_completion_tokens"] == 64
+        assert "max_tokens" not in payload
+
     def test_capture_on_receive(self):
         """When the response carries reasoning_content, it lands on the
         AIMessage's additional_kwargs so the next turn can echo it back."""

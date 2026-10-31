@@ -381,7 +381,33 @@ def test_statement_compaction_keeps_all_labelled_values_and_zero(monkeypatch):
     assert "unlabelled_null" not in text and "Missing [empty]" not in text
 
 
-def test_saved_export_includes_evidence_and_no_execution_from_prose(tmp_path):
+@pytest.mark.parametrize(
+    "source,timing",
+    [
+        (
+            {
+                "name": "Retrieved source",
+                "url": "https://example.test/retrieved",
+                "retrieved_at": "2026-10-30T08:00:00Z",
+            },
+            "retrieved 2026-10-30T08:00:00Z",
+        ),
+        (
+            {
+                "name": "Observed source",
+                "url": "https://example.test/observed",
+                "observed_at": "2026-10-30T08:00:00Z",
+                "published": "2026-10-08",
+            },
+            "observed 2026-10-30T08:00:00Z",
+        ),
+        (
+            {"name": "Undated source", "url": "https://example.test/undated"},
+            "retrieval/observation time unavailable",
+        ),
+    ],
+)
+def test_saved_export_includes_evidence_and_no_execution_from_prose(tmp_path, source, timing):
     from desktop.integration import append_evidence
     from desktop.report_runtime import execution_details
     from tradingagents.reporting import write_report_tree
@@ -414,7 +440,7 @@ def test_saved_export_includes_evidence_and_no_execution_from_prose(tmp_path):
             },
             "basis": [],
             "warnings": [],
-            "sources": [],
+            "sources": [source],
         },
         "paper_proposal": {"status": "BLOCKED"},
     }
@@ -422,6 +448,8 @@ def test_saved_export_includes_evidence_and_no_execution_from_prose(tmp_path):
     assert "52700" in path.read_text()
     assert "52700" in path.with_suffix(".html").read_text()
     assert "BLOCKED" in (tmp_path / "7_evidence/evidence.md").read_text()
+    assert timing in path.read_text()
+    assert timing in path.with_suffix(".html").read_text()
 
 
 @pytest.mark.parametrize("published", ["", "invalid", "2026-00-01", "2026-11-01", None])

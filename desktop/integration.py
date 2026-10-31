@@ -211,7 +211,9 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
             text += "\n### Đối chiếu giá định giá\n\n"
             text += f"Giá đóng cửa chuẩn {cell(comparison.get('canonical_date'))}: {cell(comparison.get('canonical_close'))} VND/cp. Giá hồ sơ: {cell(comparison.get('provider_price'))}; giá vốn hóa/số cổ phiếu suy ra: {cell(comparison.get('provider_implied_price'))} VND/cp.\n\n"
             text += f"Quan sát hồ sơ: {cell(comparison.get('provider_observed_at'))}. Thời điểm giá hồ sơ chưa biết; ngày quan sát không phải ngày của giá. Các phiên trước trùng mức giá: {cell(', '.join(comparison.get('matching_prior_canonical_dates', [])) or 'không ghi nhận')}. Trùng giá không chứng minh trễ/điều chỉnh và không tự mở khóa định giá.\n\n"
-            shares = (q.get("valuation_reconciliation") or {}).get("registered_share_reconciliation")
+            shares = (q.get("valuation_reconciliation") or {}).get(
+                "registered_share_reconciliation"
+            )
             if shares and shares.get("verified"):
                 text += f"Cơ sở cổ phiếu được đối chiếu riêng: {cell(shares.get('registered_shares'))} cổ phiếu đăng ký tại VSDC, mệnh giá {cell(shares.get('par_value_vnd'))} VND; khớp số lượng hồ sơ hiện tại và vốn điều lệ báo cáo kỳ {cell(shares.get('statement_period'))}. Cổ phiếu quỹ và vốn ưu đãi được báo cáo bằng 0; không có thay đổi đăng ký sau kỳ này. Vốn hóa tính riêng bằng giá đóng cửa chuẩn × cơ sở cổ phiếu đã đối chiếu, không dùng lại vốn hóa theo giá hồ sơ khác phiên. Chưa loại trừ mua lại chưa công bố sau kỳ báo cáo; số đăng ký tự nó không phải số lưu hành/free float. Nguồn: {cell(shares.get('source_url'))}.\n\n"
         insider = q.get("insider_dealings") or {}
@@ -249,7 +251,13 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
         for role, receipt in result.get("handoffs", {}).items():
             text += f"- {role}: {receipt['metric_count']} metrics supplied, {receipt['available_metrics']} available; snapshot {receipt['snapshot_fingerprint']}. Input verified, not a guarantee of correct interpretation.\n"
         for source in q["sources"]:
-            text += f"\n- {source['name']}: {source['url']} (retrieved {source['retrieved_at']})\n"
+            if source.get("retrieved_at"):
+                timing = "retrieved " + str(source["retrieved_at"])
+            elif source.get("observed_at"):
+                timing = "observed " + str(source["observed_at"])
+            else:
+                timing = "retrieval/observation time unavailable"
+            text += f"\n- {cell(source.get('name', 'Source'))}: {cell(source.get('url') or source.get('source_url') or 'URL unavailable')} ({cell(timing)})\n"
     d = result.get("decision")
     account = result.get("account_metrics") or {}
     if account.get("status") == "available":

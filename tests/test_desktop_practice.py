@@ -335,3 +335,50 @@ def test_market_failure_without_cache_never_invents_prices(tmp_path, monkeypatch
     monkeypatch.setattr(market_board, "_request", unavailable)
     with pytest.raises(RuntimeError, match="không tạo dữ liệu giả"):
         market_board.board("HPG.VN", "1m", tmp_path, now=moment("09:20:00"))
+
+
+@pytest.mark.parametrize(
+    "observed", ["2026-10-30T15:00:00", "2026-10-31T09:00:00", "2026-11-02T08:00:00"]
+)
+@pytest.mark.parametrize("has_previous", [True, False])
+def test_market_change_uses_quote_session_before_weekend_or_preopen(
+    tmp_path, monkeypatch, observed, has_previous
+):
+    from desktop import market_board
+
+    quote_time = int(moment("14:45:00").timestamp())
+    raw = [
+        {
+            "t": [quote_time - 60],
+            "o": [21000],
+            "h": [21000],
+            "l": [21000],
+            "c": [21000],
+            "v": [1000],
+        }
+    ]
+
+    def request(session, url, payload):
+        if url == market_board.CHART:
+            return raw
+        return {
+            "data": [{"id": "last", "truncTime": quote_time, "matchPrice": 21000, "matchVol": 1000}]
+        }
+
+    prices = ([{"date": "2026-10-29", "close": 21200}] if has_previous else []) + [
+        {"date": DAY, "close": 21000}
+    ]
+    monkeypatch.setattr(market_board, "_request", request)
+    monkeypatch.setattr(
+        market_board, "load", lambda *a, **kw: {"exchange": "HOSE", "prices": prices}
+    )
+    result = market_board.board(
+        "HPG.VN", "1m", tmp_path, now=datetime.fromisoformat(observed).replace(tzinfo=TZ)
+    )
+    if has_previous:
+        assert result["reference_date"] == "2026-10-29"
+        assert result["change"] == -200
+        assert result["change_fraction"] == pytest.approx(21000 / 21200 - 1)
+    else:
+        assert result["reference_date"] is None
+        assert result["change"] is None and result["change_fraction"] is None

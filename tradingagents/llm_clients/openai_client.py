@@ -92,8 +92,8 @@ def _input_to_messages(input_: Any) -> list:
 class DeepSeekChatOpenAI(NormalizedChatOpenAI):
     """DeepSeek-specific overrides on top of the OpenAI-compatible client.
 
-    Thinking-mode round-trip is the only DeepSeek-specific behavior that
-    stays here. When DeepSeek's thinking models return a response with
+    Output limits use DeepSeek's ``max_tokens`` parameter. When its thinking
+    models return a response with
     ``reasoning_content``, that field must be echoed back as part of the
     assistant message on the next turn or the API fails with HTTP 400.
     ``_create_chat_result`` captures it on receive and
@@ -106,6 +106,11 @@ class DeepSeekChatOpenAI(NormalizedChatOpenAI):
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        # LangChain's OpenAI transport renames max_tokens to OpenAI's newer
+        # max_completion_tokens. DeepSeek documents max_tokens instead; sending
+        # the OpenAI spelling can leave its default generation budget in force.
+        if "max_completion_tokens" in payload:
+            payload["max_tokens"] = payload.pop("max_completion_tokens")
         outgoing = payload.get("messages", [])
         for message_dict, message in zip(outgoing, _input_to_messages(input_), strict=False):
             if not isinstance(message, AIMessage):

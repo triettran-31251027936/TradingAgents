@@ -160,14 +160,16 @@ def board(ticker, interval, cache_dir, *, now=None, session=None, refresh=False)
             daily = load(
                 name + ".VN", now.astimezone(TZ).date().isoformat(), cache_dir, prices_only=True
             )
-            reference = daily["prices"][-1]
-            today = now.astimezone(TZ).date().isoformat()
-            # A completed current-day candle is not the prior reference close.
-            previous = next((r for r in reversed(daily["prices"]) if r["date"] < today), reference)
             quote = (
                 trades[0]
                 if trades
                 else {"time": rows[-1]["time"], "price": rows[-1]["close"], "volume": None}
+            )
+            # A weekend/pre-open observation can still quote Friday. Compare
+            # that quote with Thursday, not with the last close before today.
+            quote_date = datetime.fromtimestamp(quote["time"], TZ).date().isoformat()
+            previous = next(
+                (r for r in reversed(daily["prices"]) if r["date"] < quote_date), None
             )
             age = max(0, now.timestamp() - quote["time"])
             exchange = daily.get("exchange")
@@ -188,10 +190,11 @@ def board(ticker, interval, cache_dir, *, now=None, session=None, refresh=False)
                 "completed_sessions": [r["date"] for r in daily["prices"]],
                 "trades": trades,
                 "quote": quote,
-                "reference_close": previous["close"],
-                "reference_date": previous["date"],
-                "change": quote["price"] - previous["close"],
-                "change_fraction": quote["price"] / previous["close"] - 1,
+                "reference_close": previous["close"] if previous else None,
+                "reference_date": previous["date"] if previous else None,
+                "reference_basis": "Completed close before source quote session",
+                "change": quote["price"] - previous["close"] if previous else None,
+                "change_fraction": quote["price"] / previous["close"] - 1 if previous else None,
                 "retrieved_at": now.isoformat(),
                 "retrieved_epoch": now.timestamp(),
                 "quote_age_seconds": round(age),
