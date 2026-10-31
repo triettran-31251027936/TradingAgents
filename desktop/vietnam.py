@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 14
+VERSION = 15
 LOCK = threading.Lock()
 
 
@@ -508,15 +508,28 @@ def load(
     session=None,
     prices_only=False,
     news_article_limit=20,
+    global_news_article_limit=10,
+    global_news_lookback_days=7,
 ):
     ticker = symbol(ticker)
     date.fromisoformat(asof)
     folder = Path(cache_dir) / "vietnam"
     if type(news_article_limit) is not int or news_article_limit < 1:
         raise ValueError("news_article_limit must be a positive integer")
+    if (
+        type(global_news_article_limit) is not int
+        or global_news_article_limit < 1
+        or type(global_news_lookback_days) is not int
+        or global_news_lookback_days < 0
+    ):
+        raise ValueError("Global news requires positive article limit and nonnegative lookback")
     path = folder / (
         f"{ticker}_{asof}_v{VERSION}"
-        + ("_prices.json" if prices_only else f"_news{news_article_limit}.json")
+        + (
+            "_prices.json"
+            if prices_only
+            else f"_news{news_article_limit}_global{global_news_article_limit}x{global_news_lookback_days}.json"
+        )
     )
     with LOCK:
         if (
@@ -817,6 +830,27 @@ def load(
                     "status": domestic_social["status"],
                 }
             )
+        market_news = {}
+        if not prices_only:
+            from desktop import market_news_vietnam
+
+            try:
+                market_news = market_news_vietnam.load(
+                    asof,
+                    cache_dir,
+                    limit=global_news_article_limit,
+                    look_back_days=global_news_lookback_days,
+                )
+            except OSError as exc:
+                market_news = {
+                    "status": "unavailable",
+                    "records": [],
+                    "sources": [],
+                    "scope": market_news_vietnam.SCOPE,
+                    "warnings": ["Market-news cache unavailable: " + type(exc).__name__],
+                }
+            warnings.extend(market_news.get("warnings", []))
+            sources.extend(market_news.get("sources", []))
         universe_path = folder / "symbols.json"
         universe = (
             json.loads(universe_path.read_text())
@@ -860,6 +894,7 @@ def load(
             "warnings": warnings,
             "news": news,
             "news_coverage": news_coverage,
+            "market_news": market_news,
             "sources": sources,
             "basis": [
                 "Prices as returned by source; historical corporate-action adjustments may apply.",
@@ -914,6 +949,10 @@ def capsule(bundle):
         from desktop.social_vietnam import summary as social_summary
 
         decoded["domestic_social"] = social_summary(bundle["domestic_social"])
+    if bundle.get("market_news"):
+        from desktop.market_news_vietnam import summary as market_news_summary
+
+        decoded["market_news"] = market_news_summary(bundle["market_news"])
     return json.dumps(decoded, ensure_ascii=False, allow_nan=False)
 
 

@@ -14,6 +14,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -34,6 +35,25 @@ logger = logging.getLogger(__name__)
 # processes without serializing Codex's original four-analyst fan-out.
 _LIMITERS: dict[tuple[str, int], threading.BoundedSemaphore] = {}
 _LIMITERS_LOCK = threading.Lock()
+
+
+def agy_prompt_budget(command: list[str]) -> int:
+    """Bound an argv prompt by OS limits, including environment and headroom.
+
+    macOS permits larger arguments than Linux's per-string limit. Retain an
+    application cap, and fail before launch rather than truncating any history.
+    """
+    try:
+        total = int(os.sysconf("SC_ARG_MAX"))
+    except (AttributeError, ValueError, OSError):
+        return 120_000
+    used = sum(len(os.fsencode(k)) + len(os.fsencode(v)) + 2 for k, v in os.environ.items())
+    used += sum(len(os.fsencode(arg)) + 1 for arg in command) + len(b"--print=") + 1
+    remaining = max(0, total - used - 65_536)
+    platform_cap = 200_000 if sys.platform == "darwin" else 120_000
+    if sys.platform.startswith("linux"):
+        platform_cap = min(platform_cap, int(os.sysconf("SC_PAGESIZE")) * 32 - len(b"--print=") - 1)
+    return min(remaining, platform_cap)
 
 
 def _limiter(provider: str, limit: int):
@@ -226,8 +246,11 @@ class CLIChatModel(BaseChatModel):
             if self.provider == "agy_cli":
                 # Refuse an oversized argument instead of losing history. The
                 # agy streaming-stdin path hangs on the verified local version.
-                if len(prompt.encode("utf-8")) > 120_000:
-                    raise ValueError("agy prompt exceeds 120 KB; use codex_cli for long histories")
+                budget = agy_prompt_budget(command)
+                if len(prompt.encode("utf-8")) > budget:
+                    raise ValueError(
+                        f"agy prompt exceeds safe argv budget ({budget} bytes); use codex_cli for long histories; no history was truncated"
+                    )
                 command.append("--print=" + prompt)
             logger.info("CLI model request started: %s / %s", self.provider, self.model_name)
             # No shell interpolation; neither prompts nor tool args become commands.

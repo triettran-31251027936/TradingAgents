@@ -119,3 +119,11 @@ receive descriptive Vietnamese labels. The usage section adds a provider table
 above the role table, using only recorded request/token receipts. Missing token
 counters and absent usage are explicit, distinct from zero. No decorative charts
 or invented provider proportions; preserve old report provenance.
+
+## Attributed market-news sample
+
+Extend the same evidence notes with one disclosure for selected VnEconomy RSS
+headlines and bounded excerpts. Show publisher, publication/first-observation
+time, lookback, selected/omitted counts and source limitations. Three feeds from
+one publisher are not three independent confirmations. Keep upstream global-news
+tools separate, and do not render a model decision for a source-only snapshot.

@@ -41,6 +41,25 @@ def source():
     ]
 
 
+def test_agy_must_read_back_new_market_news_ids_too():
+    q = evidence()
+    q["market_news"] = {
+        "records": [
+            {
+                "id": "market:test",
+                "title": "Market headline",
+                "url": "https://vneconomy.vn/test.htm",
+                "published": "2026-10-30T08:00:00+07:00",
+            }
+        ]
+    }
+    complete = report(q)
+    validate(complete, q, source())
+    complete.context_readback.headline_ids.remove("news:market:test")
+    with pytest.raises(ValueError, match="exact provided news set"):
+        validate(complete, q, source())
+
+
 def report(q=None):
     q = q or evidence()
     expected = ledger(q, source())

@@ -69,6 +69,17 @@ def ledger(bundle, messages):
         }
         for r in bundle.get("news", [])
     ]
+    company_news_count = len(news)
+    news.extend(
+        {
+            "id": "news:" + r["id"],
+            "published": r["published"],
+            "headline": r["title"],
+            "url": r["url"],
+            "coverage": "VnEconomy market-news RSS; secondary reporting, not company-specific verified facts; no full article read",
+        }
+        for r in (bundle.get("market_news") or {}).get("records", [])
+    )
     social = bundle.get("domestic_social") or {}
     topics = social.get("context_records", [])
     social_status = social.get("status", "not_supplied")
@@ -79,6 +90,8 @@ def ledger(bundle, messages):
         "analysis_date": bundle["analysis_date"],
         "snapshot_fingerprint": bundle["fingerprint"],
         "news_count": len(news),
+        "company_news_count": company_news_count,
+        "market_news_count": len(news) - company_news_count,
         "domestic_social_status": social_status,
         "domestic_topic_ids": [r["id"] for r in topics],
         "domestic_social_source": social.get("source_url"),

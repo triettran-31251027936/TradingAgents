@@ -46,6 +46,8 @@ def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper
             asof,
             cfg["data_cache_dir"],
             news_article_limit=cfg.get("news_article_limit", 20),
+            global_news_article_limit=cfg.get("global_news_article_limit", 10),
+            global_news_lookback_days=cfg.get("global_news_lookback_days", 7),
         )
         graph.config["tool_vendors"] = {
             **graph.config.get("tool_vendors", {}),
@@ -124,6 +126,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "insider_dealings": quant.get("insider_dealings", {}),
             "domestic_social": quant.get("domestic_social", {}),
             "news_coverage": quant.get("news_coverage", {}),
+            "market_news": quant.get("market_news", {}),
             "quote_date": quant["prices"][-1]["date"],
             "metrics": quant["metrics"],
             "missing": quant["missing"],
@@ -232,6 +235,15 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
             if shares and shares.get("verified"):
                 text += f"Cơ sở cổ phiếu được đối chiếu riêng: {cell(shares.get('registered_shares'))} cổ phiếu đăng ký tại VSDC, mệnh giá {cell(shares.get('par_value_vnd'))} VND; khớp số lượng hồ sơ hiện tại và vốn điều lệ báo cáo kỳ {cell(shares.get('statement_period'))}. Cổ phiếu quỹ và vốn ưu đãi được báo cáo bằng 0; không có thay đổi đăng ký sau kỳ này. Vốn hóa tính riêng bằng giá đóng cửa chuẩn × cơ sở cổ phiếu đã đối chiếu, không dùng lại vốn hóa theo giá hồ sơ khác phiên. Chưa loại trừ mua lại chưa công bố sau kỳ báo cáo; số đăng ký tự nó không phải số lưu hành/free float. Nguồn: {cell(shares.get('source_url'))}.\n\n"
         insider = q.get("insider_dealings") or {}
+        market_news = q.get("market_news") or {}
+        if market_news:
+            text += "\n### Tin tài chính, chứng khoán và kinh tế thế giới — VnEconomy RSS\n\n"
+            text += cell(market_news.get("scope")) + "\n\n"
+            text += f"Trạng thái: {cell(market_news.get('status'))}; cửa sổ {cell(market_news.get('window_start'))} → {cell(market_news.get('window_end'))}; giới hạn {cell(market_news.get('article_limit'))} bài. Ba feed thuộc một nhà xuất bản, không phải ba nguồn xác nhận độc lập.\n\n"
+            for row in market_news.get("records", []):
+                text += f"- [{cell(row['title'])}]({row['url']}) · {cell(row['published'])} · VnEconomy · ID {cell(row['id'])}\n\n  {cell(row.get('excerpt', ''))} [tóm tắt RSS, chưa đọc toàn văn]\n\n"
+            for warning in market_news.get("warnings", []):
+                text += "- " + cell(warning) + "\n"
         if insider:
             text += "\n### Giao dịch cổ đông và người nội bộ — toàn bộ dòng nguồn đã lưu\n\n"
             text += "Nguồn tổng hợp CafeF, chưa đối chiếu từng công bố với sở giao dịch. Đăng ký không phải kết quả; ESOP không phải mua khớp lệnh. Ngày công bố ban đầu không chứng minh ngày thị trường biết kết quả. Không có giá thực hiện.\n\n"

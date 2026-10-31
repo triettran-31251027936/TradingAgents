@@ -141,9 +141,22 @@ def test_agy_schema_finish_is_not_an_external_tool(cli_model, monkeypatch):
     )
 
 
-def test_agy_refuses_long_history_without_truncation(cli_model):
-    with pytest.raises(ValueError, match="120 KB"):
+def test_agy_refuses_long_history_without_truncation(cli_model, monkeypatch):
+    import tradingagents.llm_clients.cli_client as cli
+
+    monkeypatch.setattr(cli, "agy_prompt_budget", lambda command: 120_000)
+    with pytest.raises(ValueError, match="no history was truncated"):
         cli_model.model_copy(update={"provider": "agy_cli"}).invoke("x" * 120_001)
+
+
+def test_agy_darwin_budget_includes_environment_and_preserves_longer_input(monkeypatch):
+    import tradingagents.llm_clients.cli_client as cli
+
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    monkeypatch.setattr(cli.os, "sysconf", lambda name: 1_048_576)
+    assert cli.agy_prompt_budget(["agy", "--sandbox"]) == 200_000
+    monkeypatch.setattr(cli.os, "sysconf", lambda name: 131_072)
+    assert 0 < cli.agy_prompt_budget(["agy", "--sandbox"]) < 120_000
 
 
 def test_timeout_terminates_process(cli_model, monkeypatch):
