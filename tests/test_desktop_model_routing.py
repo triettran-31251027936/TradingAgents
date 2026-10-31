@@ -26,6 +26,35 @@ class Target:
         return AIMessage(content=self.name)
 
 
+def test_routing_uses_provider_specific_effort_parameter(tmp_path, monkeypatch):
+    supplied = []
+
+    def client(cfg, tier, **kwargs):
+        supplied.append((cfg.get("quick_think_provider"), kwargs))
+        return SimpleNamespace(get_llm=lambda: ScriptedModel(structured=True))
+
+    monkeypatch.setattr(trading_graph, "create_tier_client", client)
+    monkeypatch.setattr(llm_clients, "create_tier_client", client)
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    cfg.update(data_cache_dir=str(tmp_path), results_dir=str(tmp_path / "results"))
+    graph = trading_graph.TradingAgentsGraph(config=cfg)
+    supplied.clear()
+    apply_role_models(
+        graph,
+        {
+            "Bear Researcher": {"provider": "deepseek", "model": "deepseek-flash", "effort": "low"},
+            "Portfolio Manager": {
+                "provider": "codex_cli",
+                "model": "gpt-6.1-sol",
+                "effort": "high",
+            },
+        },
+    )
+    assert supplied[0][1]["reasoning_effort"] == "low"
+    assert "cli_reasoning_effort" not in supplied[0][1]
+    assert supplied[1][1]["cli_reasoning_effort"] == "high"
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize('metadata', [
     {'langgraph_node': 'Market Analyst'},

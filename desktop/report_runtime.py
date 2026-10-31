@@ -18,6 +18,8 @@ def execution_details(cfg):
             "model": cfg[f"{tier}_think_llm"],
         }
         models[role] = {"provider": spec["provider"], "requested_model": spec["model"]}
+        if spec.get("effort"):
+            models[role]["requested_effort"] = spec["effort"]
     cli = {m["provider"] for m in models.values()} & {"codex_cli", "agy_cli"}
     ignored = [
         k
@@ -55,9 +57,9 @@ def provenance_markdown(details):
         if details["mode"] == "per_role_extension"
         else "Mode: original TradingAgents quick/deep allocation.\n\n"
     )
-    text += "| Role | Provider | Requested model |\n| --- | --- | --- |\n"
+    text += "| Role | Provider | Requested model | Requested effort |\n| --- | --- | --- | --- |\n"
     for role, model in details["models"].items():
-        values = [role, model["provider"], model["requested_model"]]
+        values = [role, model["provider"], model["requested_model"], model.get("requested_effort", "provider default / not recorded")]
         text += (
             "| "
             + " | ".join(str(x).replace("|", "\\|").replace("\n", " ") for x in values)

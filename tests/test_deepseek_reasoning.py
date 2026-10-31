@@ -21,8 +21,20 @@ from pydantic import BaseModel
 from tradingagents.llm_clients.openai_client import (
     DeepSeekChatOpenAI,
     NormalizedChatOpenAI,
+    OpenAIClient,
     _input_to_messages,
 )
+
+
+def test_deepseek_flash_effort_reaches_wire_without_openai_model_filter(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "isolated-key")
+    model = OpenAIClient(
+        "deepseek-flash", provider="deepseek", reasoning_effort="low", max_tokens=2048
+    ).get_llm()
+    payload = model._get_request_payload([HumanMessage(content="Evidence readback")])
+    assert payload["reasoning_effort"] == "low"
+    assert payload["max_tokens"] == 2048
+
 
 # ---------------------------------------------------------------------------
 # _input_to_messages — the helper that handles list / ChatPromptValue / other

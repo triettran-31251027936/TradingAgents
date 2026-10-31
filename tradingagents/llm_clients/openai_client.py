@@ -404,7 +404,11 @@ class OpenAIClient(BaseLLMClient):
         for key in _PASSTHROUGH_KWARGS:
             if key not in self.kwargs:
                 continue
-            if key == "reasoning_effort" and not _supports_reasoning_effort(self.model):
+            if key == "reasoning_effort" and not (
+                _supports_reasoning_effort(self.model)
+                or self.provider == "deepseek"
+                and self.model in ("deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro")
+            ):
                 continue
             llm_kwargs[key] = self.kwargs[key]
 

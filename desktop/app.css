@@ -12,3 +12,4 @@
 #paper-stats{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}#paper-stats .stat{padding:16px 18px}#paper-stats .stat strong{font-size:20px;white-space:nowrap}#page-paper .intro-line{margin-bottom:20px}@media(max-width:1150px){#paper-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .insider-table{min-width:1100px}.insider-table td:nth-child(n+4){white-space:nowrap;font-variant-numeric:tabular-nums}.insider-table td[colspan]{white-space:normal}.insider-table th{letter-spacing:0}
+.role-button.incomplete .role-dot{background:var(--warn)}.role-button.incomplete .role-state{color:var(--warn)}

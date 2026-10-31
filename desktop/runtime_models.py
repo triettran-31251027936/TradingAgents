@@ -89,6 +89,7 @@ class Runtime:
         self.decision = None
         self.grounding = {}
         self.handoffs = {}
+        self.incomplete_roles = {}
         from desktop.account_metrics import evidence
 
         self.account_metrics = evidence(quant, book) if quant else None
@@ -277,6 +278,13 @@ class Runtime:
         return result
 
     def _capture(self, role, result, value=None):
+        if isinstance(result, AIMessage) and not result.tool_calls:
+            finish = result.response_metadata.get("finish_reason")
+            with self.lock:
+                if finish == "length":
+                    self.incomplete_roles[role] = "output_token_limit"
+                elif finish == "stop":
+                    self.incomplete_roles.pop(role, None)
         if self.quant and role != "Memory Log":
             serialized = json.dumps(
                 request_messages(value or []), ensure_ascii=False, sort_keys=True, default=str
@@ -353,6 +361,9 @@ class TokenUsage(BaseCallbackHandler):
                             "provider": meta.get("ta_provider"),
                             "requested_model": meta.get("ta_requested_model"),
                             "tokens": usage,
+                            "finish_reason": getattr(message, "response_metadata", {}).get(
+                                "finish_reason"
+                            ),
                         }
                     )
 

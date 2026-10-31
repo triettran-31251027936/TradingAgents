@@ -127,3 +127,12 @@ headlines and bounded excerpts. Show publisher, publication/first-observation
 time, lookback, selected/omitted counts and source limitations. Three feeds from
 one publisher are not three independent confirmations. Keep upstream global-news
 tools separate, and do not render a model decision for a source-only snapshot.
+
+## Incomplete-output state
+
+Reuse the existing warning colour for roles whose final output hit a token cap.
+Show “Chưa đầy đủ” independently from graph completion. The decision card names
+the blocking roles and explains that no proposal is created until their arguments
+are complete and reassessed. Preserve the model's original rating/text as evidence;
+do not relabel a proposed intent as an executable order. Role effort controls now
+retain both Codex and DeepSeek settings, and reports record requested effort.

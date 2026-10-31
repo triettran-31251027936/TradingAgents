@@ -148,7 +148,15 @@ def apply_role_models(graph, routes, callbacks=(), runtime=None):
                 cfg,
                 "quick",
                 callbacks=list(callbacks),
-                **({"cli_reasoning_effort": spec["effort"]} if spec.get("effort") else {}),
+                **(
+                    {
+                        "reasoning_effort"
+                        if spec["provider"] == "deepseek"
+                        else "cli_reasoning_effort": spec["effort"]
+                    }
+                    if spec.get("effort")
+                    else {}
+                ),
             ).get_llm()
         models[role] = cache[key]
     quick = RoleModel(graph._desktop_base_models[0], models, runtime=runtime, specs=routes)

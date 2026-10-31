@@ -138,6 +138,14 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "bank_reconciliation": quant.get("bank_reconciliation", {}),
         }
     if runtime:
+        incomplete = dict(runtime.incomplete_roles)
+        blocking = sorted(role for role in incomplete if role != "Memory Log")
+        result["report_quality"] = {
+            "incomplete_roles": incomplete,
+            "execution_blocking_roles": blocking,
+            "required_outputs_complete": not blocking,
+            "scope": "Output completeness gate only; not a guarantee of factual accuracy or investment suitability.",
+        }
         result["grounding"] = runtime.grounding
         result["handoffs"] = runtime.handoffs
         result["account_metrics"] = runtime.account_metrics
@@ -150,12 +158,20 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             result["decision"] = runtime.decision
             vietnam.write_json(folder / "decision.json", runtime.decision)
             if store:
-                try:
-                    result["paper_proposal"] = store.proposal(
-                        report_id, runtime.decision, quant, quant["exchange"]
-                    )
-                except ValueError as exc:
-                    result["paper_proposal"] = {"status": "BLOCKED", "reason": str(exc)}
+                if blocking:
+                    result["paper_proposal"] = {
+                        "status": "BLOCKED",
+                        "reason": "Báo cáo chưa đầy đủ do giới hạn output ở: "
+                        + ", ".join(blocking)
+                        + ". Cần hoàn tất các vai trò này và đánh giá lại trước khi tạo lệnh; không suy lệnh từ lập luận bị cắt.",
+                    }
+                else:
+                    try:
+                        result["paper_proposal"] = store.proposal(
+                            report_id, runtime.decision, quant, quant["exchange"]
+                        )
+                    except ValueError as exc:
+                        result["paper_proposal"] = {"status": "BLOCKED", "reason": str(exc)}
             else:
                 result["paper_proposal"] = {
                     "status": "DISABLED",
@@ -313,6 +329,13 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
         text += f"\n### Proposed virtual action\n\nAction: {e['action']} · quantity: {e['quantity']} · limit: {e['limit_price']} VND/share\n\n{e['rationale']}\n\n"
         text += "\n".join("- Data gap: " + str(g) for g in e["data_gaps"]) + "\n"
     proposal = result.get("paper_proposal", {})
+    quality = result.get("report_quality") or {}
+    if quality.get("execution_blocking_roles"):
+        text += (
+            "\n### Báo cáo chưa đầy đủ — chặn đề xuất giao dịch\n\nCác vai trò bị giới hạn output: "
+            + ", ".join(quality["execution_blocking_roles"])
+            + ". Cần hoàn tất và đánh giá lại; graph kết thúc không có nghĩa mọi lập luận đã đầy đủ.\n"
+        )
     text += (
         "\nPaper status: "
         + str(proposal.get("status", "DISABLED"))

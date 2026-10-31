@@ -28,7 +28,12 @@ def balanced_routes(include_antigravity=True, role_names=None):
     routes = {}
     for role in role_names:
         if role in DEEPSEEK_BALANCED_ROLES:
-            routes[role] = {"provider": "deepseek", "model": "deepseek-flash", "max_tokens": 2048}
+            routes[role] = {
+                "provider": "deepseek",
+                "model": "deepseek-flash",
+                "max_tokens": 2048,
+                "effort": "low",
+            }
         elif role == "Sentiment Analyst" and include_antigravity:
             routes[role] = {"provider": "agy_cli", "model": "gemini-3.8-flash-high"}
         else:
