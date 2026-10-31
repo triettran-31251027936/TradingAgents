@@ -107,3 +107,15 @@ Show canonical date/price and observed source prices in ordinary evidence notes.
 Separate observation time from unknown quote time; explain coincident prior-close
 matches without declaring a cause. Preserve the existing warning colour and price
 format; no extra chart, action or order approval path is introduced.
+
+## Source receipts and provider workload extension
+
+Mode: Extension; keep navigation, approval, fields, logo, palette and typography.
+Variance 3, motion 2, density 7, asset dependence 3, brand fidelity 10. Evidence
+explains the bounded company-news window/count and exposes source receipts in
+an ordinary disclosure. Label observation, retrieval and publication separately;
+date-only records must not acquire an invented time. Existing raw source keys
+receive descriptive Vietnamese labels. The usage section adds a provider table
+above the role table, using only recorded request/token receipts. Missing token
+counters and absent usage are explicit, distinct from zero. No decorative charts
+or invented provider proportions; preserve old report provenance.
