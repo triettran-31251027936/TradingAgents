@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 13
+VERSION = 14
 LOCK = threading.Lock()
 
 
@@ -146,7 +146,11 @@ def normalize_news(raw, start, end, url):
             date.fromisoformat(day)
         except ValueError:
             continue
-        key = row.get("newsId") or row.get("id")
+        key = (
+            row.get("newsId")
+            or row.get("id")
+            or digest([row.get("publicDate"), row.get("newsTitle"), row.get("newsSourceLink")])
+        )
         if not start <= day <= end or key in seen or not row.get("newsTitle"):
             continue
         seen.add(key)
@@ -164,6 +168,65 @@ def normalize_news(raw, start, end, url):
             }
         )
     return result
+
+
+def collect_news(fetch, ticker, start, end, limit):
+    """Bound the source requests by the configured upstream article count.
+
+    A bounded feed is a sample even when the provider says its last page was
+    reached. Keep coverage metadata instead of interpreting an empty page as
+    proof that no company news exists.
+    """
+    if type(limit) is not int or limit < 1:
+        raise ValueError("news_article_limit must be a positive integer")
+    rows = []
+    scanned = 0
+    pages = 0
+    seen = set()
+    complete = False
+    failed = False
+    while scanned < limit:
+        # Keep page size constant for offset-based pagination. Only the final
+        # local selection is trimmed when the configured count is not /30.
+        size = min(30, limit)
+        url = f"https://iq.vietcap.com.vn/api/iq-insight-service/v1/news?ticker={ticker}&fromDate={start}&toDate={end}&languageId=1&page={pages}&size={size}"
+        raw = fetch("news" if pages == 0 else f"news_page_{pages}", url)
+        data = raw.get("data") if isinstance(raw, dict) else None
+        if not isinstance(data, dict) or not isinstance(data.get("content"), list):
+            failed = True
+            break
+        content = data["content"]
+        pages += 1
+        for row in normalize_news(raw, start, end, url):
+            if row["id"] not in seen:
+                seen.add(row["id"])
+                rows.append(row)
+        scanned += len(content)
+        if data.get("last") is True or len(content) < size:
+            complete = True
+            break
+        if not content:
+            break
+    rows.sort(key=lambda row: row["published"], reverse=True)
+    selected = rows[:limit]
+    return selected, {
+        "status": "partial"
+        if failed and selected
+        else "unavailable"
+        if failed
+        else "available"
+        if selected
+        else "empty_sample",
+        "start_date": start,
+        "end_date": end,
+        "article_limit": limit,
+        "pages_received": pages,
+        "raw_rows_received": scanned,
+        "items_retained": len(selected),
+        "provider_last_page_reached": complete,
+        "limit_reached": not complete and not failed and scanned >= limit,
+        "coverage": "Bounded company-news headlines/short summaries from one aggregator; no full articles or exhaustive coverage. Empty sample does not mean no news.",
+    }
 
 
 def statements(raw, metadata, asof):
@@ -436,11 +499,25 @@ def compute(
     return _safe(metrics), missing
 
 
-def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=False):
+def load(
+    ticker,
+    asof,
+    cache_dir,
+    *,
+    refresh=False,
+    session=None,
+    prices_only=False,
+    news_article_limit=20,
+):
     ticker = symbol(ticker)
     date.fromisoformat(asof)
     folder = Path(cache_dir) / "vietnam"
-    path = folder / (f"{ticker}_{asof}_v{VERSION}" + ("_prices.json" if prices_only else ".json"))
+    if type(news_article_limit) is not int or news_article_limit < 1:
+        raise ValueError("news_article_limit must be a positive integer")
+    path = folder / (
+        f"{ticker}_{asof}_v{VERSION}"
+        + ("_prices.json" if prices_only else f"_news{news_article_limit}.json")
+    )
     with LOCK:
         if (
             path.exists()
@@ -507,12 +584,15 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             asof,
         )
         news_start = (date.fromisoformat(asof) - timedelta(days=7)).isoformat()
-        news_url = f"https://iq.vietcap.com.vn/api/iq-insight-service/v1/news?ticker={ticker}&fromDate={news_start}&toDate={asof}&languageId=1&page=0&size=30"
-        news = (
-            []
+        news, news_coverage = (
+            ([], {})
             if prices_only
-            else normalize_news(fetch("news", news_url), news_start, asof, news_url)
+            else collect_news(fetch, ticker, news_start, asof, news_article_limit)
         )
+        if news_coverage.get("status") in ("partial", "unavailable"):
+            warnings.append(
+                "Company news source incomplete/unavailable; empty sample is not no news"
+            )
         benchmark_raw = (
             {}
             if prices_only
@@ -779,6 +859,7 @@ def load(ticker, asof, cache_dir, *, refresh=False, session=None, prices_only=Fa
             "missing": missing,
             "warnings": warnings,
             "news": news,
+            "news_coverage": news_coverage,
             "sources": sources,
             "basis": [
                 "Prices as returned by source; historical corporate-action adjustments may apply.",
@@ -808,6 +889,7 @@ def capsule(bundle):
                 "analysis_date",
                 "currency",
                 "provider",
+                "news_coverage",
                 "bank_reconciliation",
                 "valuation_reconciliation",
                 "metrics",
@@ -874,9 +956,15 @@ def vendor_scope(bundle):
     def statement(kind):
         def read(ticker, freq="quarterly", curr_date=None):
             guard(ticker)
+            if freq not in ("annual", "quarterly"):
+                raise ValueError("Financial statement frequency must be annual or quarterly")
+            cutoff = curr_date or bundle["analysis_date"]
+            date.fromisoformat(cutoff)
+            if cutoff > bundle["analysis_date"]:
+                raise ValueError("Requested statement date is after the analysis snapshot")
             period = "years" if freq == "annual" else "quarters"
             book = bundle["statements"][kind]
-            rows = book[period][-4:]
+            rows = [r for r in book[period] if _published(r, cutoff)][-4:]
             # Keep every labelled non-null field, but do not send the provider's
             # unrelated null banking/insurance fields or repeat keys per period.
             output = io.StringIO()
@@ -885,7 +973,7 @@ def vendor_scope(bundle):
                 [
                     "Line item / provider field",
                     *[
-                        f"{r['yearReport']}-Q{r.get('lengthReport', 5)} public:{str(r['publicDate'])[:10]}"
+                        f"{r['yearReport']}{'-FY' if freq == 'annual' else '-Q' + str(r.get('lengthReport'))} public:{str(r['publicDate'])[:10]}"
                         for r in rows
                     ],
                 ]
@@ -894,7 +982,7 @@ def vendor_scope(bundle):
                 if any(r.get(key) is not None for r in rows):
                     writer.writerow([f"{title} [{key}]", *[r.get(key, "") for r in rows]])
             return (
-                "Vietcap financial statements; raw VND except per-share/ratio/share-count fields. Periods as reported; do not assume CFO quarter vs YTD. Empty cell is missing, not zero.\n"
+                f"Vietcap financial statements published by {cutoff}; raw VND except per-share/ratio/share-count fields. Periods as reported; do not assume CFO quarter vs YTD. Empty cell is missing, not zero. Restatements are not a point-in-time archive.\n"
                 + output.getvalue()
             )
 
@@ -902,15 +990,36 @@ def vendor_scope(bundle):
 
     def fundamentals(ticker, curr_date):
         guard(ticker)
+        date.fromisoformat(curr_date)
+        if curr_date != bundle["analysis_date"]:
+            raise ValueError(
+                "Fundamentals date must match the canonical analysis snapshot; prepare a separate dated snapshot"
+            )
         return capsule(bundle)
 
     def news(ticker, start_date, end_date):
         guard(ticker)
+        date.fromisoformat(start_date)
+        date.fromisoformat(end_date)
+        if start_date > end_date or end_date > bundle["analysis_date"]:
+            raise ValueError("News date range is invalid or after the analysis snapshot")
         rows = [r for r in bundle.get("news", []) if start_date <= r["published"][:10] <= end_date]
+        coverage = bundle.get("news_coverage") or {}
+        covered = (
+            bool(coverage)
+            and start_date >= coverage["start_date"]
+            and end_date <= coverage["end_date"]
+        )
         return json.dumps(
             {
                 "source": "Vietcap public company-news feed",
                 "coverage": "Headlines/short summaries only; do not claim to have read full articles. No items means no coverage, not no news.",
+                "requested_window": {"start_date": start_date, "end_date": end_date},
+                "snapshot_coverage": coverage,
+                "requested_window_within_snapshot": covered,
+                "window_warning": None
+                if covered
+                else "Requested range extends beyond, or is not established by, the saved feed window. Returned items are only the overlapping bounded sample.",
                 "items": rows,
             },
             ensure_ascii=False,

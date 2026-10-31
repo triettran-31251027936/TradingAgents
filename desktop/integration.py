@@ -41,7 +41,12 @@ def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper
             "progress",
             {"message": "Đang thu thập giá, VNINDEX và BCTC đã công bố từ nguồn Việt Nam…"},
         )
-        quant = vietnam.load(ticker, asof, cfg["data_cache_dir"])
+        quant = vietnam.load(
+            ticker,
+            asof,
+            cfg["data_cache_dir"],
+            news_article_limit=cfg.get("news_article_limit", 20),
+        )
         graph.config["tool_vendors"] = {
             **graph.config.get("tool_vendors", {}),
             **dict.fromkeys(VN_METHODS, "vietnam"),
@@ -118,6 +123,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "domestic_macro": quant.get("domestic_macro", {}),
             "insider_dealings": quant.get("insider_dealings", {}),
             "domestic_social": quant.get("domestic_social", {}),
+            "news_coverage": quant.get("news_coverage", {}),
             "quote_date": quant["prices"][-1]["date"],
             "metrics": quant["metrics"],
             "missing": quant["missing"],
@@ -205,6 +211,15 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
             )
             text += "| " + " | ".join(cell(v) for v in values) + " |\n"
         text += "\n" + "\n".join("- " + cell(v) for v in q["basis"] + q["warnings"]) + "\n"
+        news_coverage = q.get("news_coverage")
+        if news_coverage:
+            text += (
+                "\n### Phạm vi tin doanh nghiệp\n\n"
+                + f"Cửa sổ nguồn: {cell(news_coverage.get('start_date'))} → {cell(news_coverage.get('end_date'))}. "
+                + f"Giới hạn cấu hình: {cell(news_coverage.get('article_limit'))} bài; giữ {cell(news_coverage.get('items_retained'))} bài, nhận {cell(news_coverage.get('pages_received'))} trang. "
+                + f"Trạng thái: {cell(news_coverage.get('status'))}; chạm giới hạn: {cell(news_coverage.get('limit_reached'))}. "
+                + "Chỉ tiêu đề/tóm tắt từ một nguồn tổng hợp, không phải toàn văn hay toàn bộ tin thị trường. Mẫu rỗng không chứng minh không có tin.\n"
+            )
         text += "\nCoverage is limited to the recorded sources; domestic shareholder-dealing coverage is aggregator-reported and distinct from exchange-confirmed results; community RSS is a bounded unverified opinion sample, and missing social coverage is not zero sentiment. NSDP macro files may lag newer press releases; read each observation period and freshness warning.\n"
         comparison = (q.get("valuation_reconciliation") or {}).get("quote_comparison")
         if comparison:

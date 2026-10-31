@@ -356,6 +356,7 @@ def test_statement_compaction_keeps_all_labelled_values_and_zero(monkeypatch):
 
     q = bundle()
     q.update(
+        analysis_date="2026-10-30",
         statements={
             "income": {
                 "fields": {"sales": "Net sales", "cost": "Costs", "empty": "Missing"},
