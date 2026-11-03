@@ -217,3 +217,9 @@ in the exact-request cache; a failed completeness check does not trigger a
 paid fallback. Memory's balanced output ceiling is2048 after a real1024-token
 reflection exhausted its budget (including reasoning); analysis stays4096.
 The request cap and provider allocation remain unchanged.
+
+The Vietnam settlement price adapter returns an Asia/Ho_Chi_Minh date index so
+the unchanged upstream evaluator excludes the current Vietnamese session, not
+the UTC day. Query end dates include holiday slack and may be in the future;
+the snapshot cutoff/cache date is clamped to the current Vietnamese date.
+This does not invent future prices or change the original holding-window rule.

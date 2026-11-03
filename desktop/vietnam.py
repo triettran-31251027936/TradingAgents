@@ -1143,14 +1143,21 @@ def settlement_scope(cfg):
     def closes(ticker, start, end):
         if not is_vietnam(ticker):
             return original(ticker, start, end)
-        asof = (date.fromisoformat(end) - timedelta(days=1)).isoformat()
+        # The upstream evaluator requests a future upper bound to leave room
+        # for holidays. Archive what is observed now, not a future-dated price
+        # snapshot, and let its unchanged holding-window checks decide readiness.
+        asof = min(
+            date.fromisoformat(end) - timedelta(days=1), datetime.now(TZ).date()
+        ).isoformat()
         data = load(ticker, asof, cfg["data_cache_dir"], prices_only=True)
         rows = [r for r in data["prices"] if start <= r["date"] < end]
         # A truncated history must never settle a different holding window.
         if rows and data["prices"][0]["date"] > start:
             raise ValueError("Lịch sử Việt Nam không đủ cho cửa sổ settlement; giữ pending.")
         return pd.Series(
-            [r["close"] for r in rows], index=pd.to_datetime([r["date"] for r in rows]), dtype=float
+            [r["close"] for r in rows],
+            index=pd.to_datetime([r["date"] for r in rows]).tz_localize(TZ),
+            dtype=float,
         )
 
     settlement.get_closes = closes
