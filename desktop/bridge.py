@@ -53,7 +53,10 @@ def emit(kind, payload):
 
 def clean_error(message):
     text = str(message)
-    for name in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+    for name in (
+        "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY",
+        "FRED_API_KEY", "ALPHA_VANTAGE_API_KEY",
+    ):
         secret = os.environ.get(name)
         if secret and len(secret) >= 8:
             text = text.replace(secret, "[redacted]")

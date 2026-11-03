@@ -128,6 +128,17 @@ time, lookback, selected/omitted counts and source limitations. Three feeds from
 one publisher are not three independent confirmations. Keep upstream global-news
 tools separate, and do not render a model decision for a source-only snapshot.
 
+## Data-source credential extension
+
+Mode: Extension; retain the existing settings navigation, logo, Avenir Next,
+navy/mint palette, 12px panels and 4/8/12/24px spacing. Variance 3, motion 2,
+density 7, assets 3, fidelity 10. A two-column form below provider settings
+stacks below 900px. FRED and Alpha Vantage have separate masked inputs,
+configured/unconfigured/error states and save/remove actions. No key echo,
+automatic vendor switch or inferred .VN coverage. Official key-registration
+links explain how to enable existing upstream data tools. Consent and all
+existing field IDs remain intact.
+
 ## Incomplete-output state
 
 Reuse the existing warning colour for roles whose final output hit a token cap.

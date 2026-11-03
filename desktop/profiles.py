@@ -15,7 +15,7 @@ DEEPSEEK_BALANCED_ROLES = frozenset(
 BALANCED_BUDGET = {
     "enabled": True,
     "deepseek_max_requests": 18,
-    "deepseek_max_output_tokens": 2048,
+    "deepseek_max_output_tokens": 4096,
     "deepseek_in_backtest": True,
 }
 
@@ -31,7 +31,10 @@ def balanced_routes(include_antigravity=True, role_names=None):
             routes[role] = {
                 "provider": "deepseek",
                 "model": "deepseek-flash",
-                "max_tokens": 2048,
+                # Vietnamese analyst/debate reports hit 2048 even at low
+                # effort in installed acceptance. Keep memory inexpensive,
+                # without forcing truncated analysis through the quality gate.
+                "max_tokens": 1024 if role == "Memory Log" else 4096,
                 "effort": "low",
             }
         elif role == "Sentiment Analyst" and include_antigravity:

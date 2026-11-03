@@ -5,7 +5,11 @@ from pathlib import Path
 
 from dotenv import dotenv_values, set_key, unset_key
 
-ENV_NAME = {"deepseek": "DEEPSEEK_API_KEY"}
+ENV_NAME = {
+    "deepseek": "DEEPSEEK_API_KEY",
+    "fred": "FRED_API_KEY",
+    "alpha_vantage": "ALPHA_VANTAGE_API_KEY",
+}
 ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 
 

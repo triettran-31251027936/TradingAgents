@@ -76,10 +76,10 @@ def test_budget_allows_tool_loops_but_stops_after_explicit_cap():
 
 def test_every_paid_role_is_capped_without_sdk_retry():
     cfg = balanced_config()
-    for spec in cfg["desktop_role_models"].values():
+    for role, spec in cfg["desktop_role_models"].items():
         if spec["provider"] == "deepseek":
             kwargs = constrain(cfg, spec)
-            assert kwargs["max_tokens"] == 2048
+            assert kwargs["max_tokens"] == (1024 if role == "Memory Log" else 4096)
             assert kwargs["llm_max_retries"] == 0
 
 

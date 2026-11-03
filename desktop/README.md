@@ -118,3 +118,23 @@ there is no extra final council or synthesis phase. See DESKTOP-INTEGRATION.md
 for the current role routing, canonical VN data, reports, execution schema and
 consent-gated 3M VND paper account. Older saved reports describe their original
 run settings and do not redefine the current account or next-run model routing.
+
+### Source credentials and report capacity
+
+Settings exposes separate masked FRED and Alpha Vantage keys below the model
+providers. Keys use the original FRED_API_KEY/ALPHA_VANTAGE_API_KEY dotenv names,
+remain local, and are never returned to the renderer or exported into reports.
+Saving a key does not change vendor selection or imply coverage of Vietnamese
+tickers. FRED still requires the user's own key; no key has been provisioned by
+the integration. Alpha Vantage remains optional.
+
+The balanced profile retains6 Codex/6 DeepSeek/1 agy. DeepSeek analysis gets a
+4096-token output ceiling after real2048-token reports were truncated even with
+low effort; Memory is capped at1024. The18-request cap, zero SDK retries and
+incomplete-report execution gate remain. This increases permitted capacity,
+not the number of requests or a guarantee of complete output.
+
+The2026-11-03 installed-engine run finished News without a length stop, but
+failed at Market when the OpenAI-compatible endpoint returned an unexpected
+None response. Four roles completed; no full report or execution acceptance
+is claimed. The original failure proof and source receipts are retained.
