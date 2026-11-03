@@ -521,3 +521,25 @@ def test_clear_checkpoints_calls_original_utility_without_deleting_memory(deskto
     result = bridge.dispatch('clear_checkpoints', {})
     assert result == {'cleared': 1}
     assert memory.read_text() == 'keep this memory'
+
+
+@pytest.mark.unit
+def test_nested_backtest_failures_do_not_return_loaded_provider_keys(desktop, monkeypatch):
+    import json
+
+    import tradingagents.backtest as backtest
+
+    cfg, _ = desktop
+    monkeypatch.setattr(bridge, 'config', lambda: cfg)
+    key = 'synthetic-private-provider-secret'
+    monkeypatch.setenv('DEEPSEEK_API_KEY', key)
+    monkeypatch.setattr(backtest, 'run_backtest', lambda *a, **kw: BacktestResult(
+        run_id='private_error', log_path=Path(cfg['memory_log_path']),
+        failures=[('BSR.VN', TRADE_DATE, 'Provider rejected '+key)],
+        settlement_failures=[('BSR.VN', 'Reflection rejected '+key)],
+    ))
+    monkeypatch.setattr(backtest, 'summarize', lambda _: BacktestSummary(resolved=0, pending=0, by_rating={}))
+    result = bridge.dispatch('backtest', {'tickers': 'BSR.VN', 'start': TRADE_DATE, 'end': TRADE_DATE})
+    assert key not in json.dumps(result)
+    assert result['failures'][0][:2] == ('BSR.VN', TRADE_DATE)
+    assert '[redacted]' in result['settlement_failures'][0][1]

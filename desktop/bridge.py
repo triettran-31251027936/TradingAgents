@@ -715,8 +715,8 @@ def dispatch(action, payload):
             "run_id": result.run_id,
             "cells_run": result.cells_run,
             "skipped": result.skipped,
-            "failures": result.failures,
-            "settlement_failures": result.settlement_failures,
+            "failures": [(ticker, day, clean_error(reason)) for ticker, day, reason in result.failures],
+            "settlement_failures": [(ticker, clean_error(reason)) for ticker, reason in result.settlement_failures],
             "summary": asdict(summarize(result)),
         }
     if action == "settle":
@@ -737,7 +737,9 @@ def dispatch(action, payload):
 
         with settlement_scope(cfg):
             result = graph.settle_all_pending() if all_tickers else graph.settle_pending(ticker)
-        return asdict(result)
+        payload = asdict(result)
+        payload["failed"] = [(ticker, day, clean_error(reason)) for ticker, day, reason in result.failed]
+        return payload
     raise ValueError("Thao tác không được hỗ trợ.")
 
 

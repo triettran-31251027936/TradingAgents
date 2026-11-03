@@ -190,3 +190,19 @@ snapshot from another desktop session is not sufficient evidence that this CLI
 has the same availability. This read-only probe initializes the protocol and
 reads limits only; it creates no thread/turn and consumes no inference tokens.
 It is an acceptance tool, not an automatically installed quota preflight.
+
+### Backtest export commit and score display
+
+The desktop sweep commits its final decision to the original memory log only
+after desktop evidence export succeeds. Otherwise the original grid's skip
+logic would treat an export failure as a finished cell. A resumed grid now
+exports the completed checkpoint without repeating model calls, then commits
+one memory entry and clears the checkpoints. The original scoring logic and
+standalone upstream backtest remain unchanged.
+
+The results view shows resolved, pending and unscored REVIEW cells and the
+actual logged scoring window. Hold has no directional hit rate. Alpha is a
+stock-minus-benchmark outcome across independent cells, not paper-account P&L.
+Provider failure messages returned by backtest/settlement pass through the same
+key-redaction function as top-level errors. Renderer QA uses explicitly labelled
+synthetic scores and must not be presented as a paid live backtest performance.

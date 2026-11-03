@@ -174,3 +174,55 @@ def test_completed_graph_survives_export_failure_and_retries_without_models(
         assert result["report_quality"]["required_outputs_complete"] is False
     else:
         assert result[0]["market_report"] == "Synthetic partial"
+
+
+def test_real_grid_does_not_skip_a_cell_whose_evidence_export_failed(tmp_path, monkeypatch):
+    from tradingagents.memory import TradingMemoryLog
+    from tradingagents.memory.settlement import Settlement
+
+    control = {"market": 0, "manager": 0, "record": 0, "runtimes": []}
+    Base = fixture_graph(monkeypatch, control)
+
+    class GridGraph(Base):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.memory_log = TradingMemoryLog(self.config)
+
+        def record_decision(self, ticker, asof, state):
+            control["record"] += 1
+            self.memory_log.store_decision(ticker, asof, state["final_trade_decision"], rating="Hold")
+
+        def settle_pending(self, ticker):
+            # Outcome collection/reflection is outside this export-resume test.
+            return Settlement()
+
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    cfg.update(
+        checkpoint_enabled=True, data_cache_dir=str(tmp_path / "cache"),
+        results_dir=str(tmp_path / "reports"),
+        desktop_usage={"enabled": True, "cache_enabled": False},
+        desktop_budget={"enabled": True, "deepseek_max_requests": 1},
+        desktop_vietnam={"enabled": False},
+    )
+    monkeypatch.setattr(backtest, "TradingAgentsGraph", GridGraph)
+    original = integration.artifacts
+    fail = {"enabled": True}
+
+    def export(*args, **kwargs):
+        if fail["enabled"]:
+            raise OSError("Synthetic evidence export failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(integration, "artifacts", export)
+    with integration.backtest_scope(cfg, lambda *args: None):
+        first = backtest.run_backtest(["BSR.VN"], ["2026-01-09"], cfg, run_id="export_resume")
+    assert first.cells_run == 0 and len(first.failures) == 1
+    assert not TradingMemoryLog({"memory_log_path": str(first.log_path)}).load_entries()
+    assert control["record"] == 0
+    fail["enabled"] = False
+    with integration.backtest_scope(cfg, lambda *args: None):
+        resumed = backtest.run_backtest(["BSR.VN"], ["2026-01-09"], cfg, run_id="export_resume")
+    assert resumed.cells_run == 1 and resumed.skipped == 0 and not resumed.failures
+    assert control["market"] == control["manager"] == control["record"] == 1
+    assert len(TradingMemoryLog({"memory_log_path": str(resumed.log_path)}).load_entries()) == 1
+    assert not list((tmp_path / "cache/desktop-checkpoints").glob("*.json"))

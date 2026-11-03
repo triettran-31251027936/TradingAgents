@@ -374,6 +374,12 @@ def backtest_scope(cfg, emit):
     original = backtest.TradingAgentsGraph
 
     class Graph(original):
+        def record_decision(self, ticker, asof, state):
+            # The sweep skips cells already committed to its memory log. Keep
+            # this pending until evidence export succeeds, so a failed export
+            # is resumed instead of silently skipped on the next grid run.
+            self._desktop_pending_record = (ticker, asof, state)
+
         def begin_checkpoint(self, ticker, asof, asset_type="stock", portfolio=None):
             tid = super().begin_checkpoint(ticker, asof, asset_type, portfolio)
             if tid and self._desktop_runtime:
@@ -417,6 +423,7 @@ def backtest_scope(cfg, emit):
 
         def propagate(self, ticker, asof, asset_type="stock", portfolio=None):
             self._desktop_pending_clear = None
+            self._desktop_pending_record = None
             self.config = copy.deepcopy(self._desktop_base_config)
             self.resolve_instrument_context = self._desktop_identity
             counter = TokenUsage()
@@ -438,6 +445,8 @@ def backtest_scope(cfg, emit):
             )
             folder.mkdir(parents=True, exist_ok=True)
             artifacts(folder, quant, runtime, counter, None, "backtest/" + ticker + "/" + asof)
+            if self._desktop_pending_record:
+                super().record_decision(*self._desktop_pending_record)
             if self._desktop_pending_clear:
                 super().clear_checkpoint_on_success(*self._desktop_pending_clear)
             if runtime and runtime._checkpoint:
