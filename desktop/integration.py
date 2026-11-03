@@ -374,6 +374,19 @@ def backtest_scope(cfg, emit):
     original = backtest.TradingAgentsGraph
 
     class Graph(original):
+        def begin_checkpoint(self, ticker, asof, asset_type="stock", portfolio=None):
+            tid = super().begin_checkpoint(ticker, asof, asset_type, portfolio)
+            if tid and self._desktop_runtime:
+                self._desktop_runtime.bind_checkpoint(
+                    tid, self._desktop_counter, resuming=self._resuming
+                )
+            return tid
+
+        def clear_checkpoint_on_success(self, ticker, asof, asset_type="stock", portfolio=None):
+            # Upstream calls this before the desktop evidence files are saved.
+            # Defer deletion so a failed export can resume without new inference.
+            self._desktop_pending_clear = (ticker, asof, asset_type, portfolio)
+
         def __init__(self, *args, **kwargs):
             from uuid import uuid4
 
@@ -403,6 +416,7 @@ def backtest_scope(cfg, emit):
             )
 
         def propagate(self, ticker, asof, asset_type="stock", portfolio=None):
+            self._desktop_pending_clear = None
             self.config = copy.deepcopy(self._desktop_base_config)
             self.resolve_instrument_context = self._desktop_identity
             counter = TokenUsage()
@@ -424,6 +438,10 @@ def backtest_scope(cfg, emit):
             )
             folder.mkdir(parents=True, exist_ok=True)
             artifacts(folder, quant, runtime, counter, None, "backtest/" + ticker + "/" + asof)
+            if self._desktop_pending_clear:
+                super().clear_checkpoint_on_success(*self._desktop_pending_clear)
+            if runtime and runtime._checkpoint:
+                runtime._checkpoint.clear()
             return result
 
         def settle_pending(self, ticker):

@@ -135,3 +135,44 @@ def test_failed_refresh_is_not_fresh_verified_registration(tmp_path):
         "AAA", "2026-10-30", tmp_path, now=NOW.replace(hour=22), session=Session(failed=True)
     )
     assert r["status"] == "cached_source_error"
+
+
+def ipo_page():
+    # Source-shaped registration history: auction tranche, whole company after
+    # equitization, later stock dividend. These are not all additive quantities.
+    raw = page(total="1.200", change="1.000")
+    raw = raw.replace("Đăng ký lần đầu", "Cấp Giấy chứng nhận đăng ký cổ phiếu trúng đấu giá")
+    raw = raw.replace(
+        "<td>1.000</td><td>N/A</td><td>01/01/2025", "<td>100</td><td>N/A</td><td>01/01/2025"
+    )
+    raw = raw.replace("<td>Thay đổi</td>", "<td>Đăng ký sau khi cổ phần hóa</td>")
+    row = "<tr><td>3</td><td></td><td>Trả cổ tức bằng cổ phiếu</td><td>200</td><td>N/A</td><td>01/10/2026</td></tr>"
+    return raw.replace('<tr><td colspan="3">Tổng cộng:', row + '<tr><td colspan="3">Tổng cộng:')
+
+
+def test_ipo_tranche_is_not_added_again_to_whole_company_registration():
+    r = m.parse(ipo_page(), "AAA", "2026-10-30")
+    assert r["registered_shares"] == 1200 and r["history_reconciled"]
+    history = r["registration_history"]
+    assert [h["reported_quantity"] for h in history] == [100, 1000, 200]
+    assert [h["change"] for h in history] == [None, None, 200]
+    assert history[1]["quantity_basis"] == "whole_company_registration"
+    assert r["history_reconciliation"]["reported_quantity_sum"] == 1300
+    assert (
+        r["history_reconciliation"]["method"]
+        == "ipo_tranche_replaced_by_full_post_equitization_registration"
+    )
+
+
+@pytest.mark.parametrize(
+    "wrong",
+    [
+        ("cổ phiếu trúng đấu giá", "cổ phiếu phát hành thêm"),
+        ("Đăng ký sau khi cổ phần hóa", "Đăng ký bổ sung"),
+        ("<td>200</td>", "<td>201</td>"),
+        ("01/01/2025", "01/10/2026"),
+    ],
+)
+def test_arbitrary_non_additive_or_misdated_histories_still_withheld(wrong):
+    with pytest.raises(ValueError):
+        m.parse(ipo_page().replace(*wrong), "AAA", "2026-10-30")

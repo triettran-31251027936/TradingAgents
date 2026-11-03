@@ -138,3 +138,38 @@ The2026-11-03 installed-engine run finished News without a length stop, but
 failed at Market when the OpenAI-compatible endpoint returned an unexpected
 None response. Four roles completed; no full report or execution acceptance
 is claimed. The original failure proof and source receipts are retained.
+
+### Desktop checkpoint receipts
+
+An enabled graph checkpoint also keeps private desktop metadata under
+data_cache_dir/desktop-checkpoints. Its identity is the hash of the original
+graph thread ID, which already includes model settings, evidence and portfolio.
+This retains typed PM decisions, incomplete-output flags, quantitative handoffs,
+grounding, usage receipts and paid attempt counts across processes. Paid attempts
+are persisted before the model is called, including requests that later fail.
+The metadata contains no provider keys or raw endpoint configuration.
+
+Analysis and backtest retain their completed graph checkpoint until report and
+evidence export succeeds. A retry can export the saved state and decision without
+calling completed nodes again. Fresh runs do not inherit a completed run's
+quality flags. Legacy checkpoints lacking desktop metadata fail before inference,
+instead of silently resetting the budget or treating partial reports as complete;
+keep them for inspection or explicitly use the existing clear-checkpoint action
+to start a new analysis. Existing saved reports are unchanged.
+
+### Registry quantities after equitization
+
+VSDC histories can contain an IPO auction tranche followed by registration of
+the whole company. Those two quantities are not additive. The parser supports
+this only for the explicit auction/post-equitization descriptions in the first
+two chronologically ordered rows, with the entire subsequent history reconciling
+to the identical header/footer current total. All reported quantities and
+certificates remain retained; the two initial entries have no invented issuance
+delta. Other unexplained arithmetic mismatches still fail validation.
+
+This resolves the BSR history at https://vsdc.vn/vi/s-detail/6571. Current shares
+are still not automatically outstanding shares: broker counts, reported charter
+capital, zero treasury/preferred capital and statement/registration dates must
+independently pass the existing valuation checks. The reconciliation method is
+included in the canonical context. Snapshot version16 prevents reuse of an
+older composite snapshot that withheld these inputs.

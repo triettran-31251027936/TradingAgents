@@ -90,12 +90,22 @@ class Runtime:
         self.grounding = {}
         self.handoffs = {}
         self.incomplete_roles = {}
+        self._checkpoint = None
         from desktop.account_metrics import evidence
 
         self.account_metrics = evidence(quant, book) if quant else None
         from desktop.budget import PaidBudget
 
         self.paid_budget = PaidBudget(cfg)
+
+    def bind_checkpoint(self, thread_id, usage, *, resuming):
+        from desktop.runtime_checkpoint import RuntimeCheckpoint
+
+        return RuntimeCheckpoint(self, usage, thread_id, resuming=resuming)
+
+    def persist(self):
+        if self._checkpoint:
+            self._checkpoint.save()
 
     def guarded_sentiment(self, role):
         spec = self.cfg.get("desktop_role_models", {}).get(role, {})
@@ -110,6 +120,7 @@ class Runtime:
         with self.lock:
             row = self.stats.setdefault(role, {"calls": 0, "cache_hits": 0})
             row[field] += 1
+        self.persist()
         self.emit("usage", {"role": role, "kind": field})
 
     def prompt(self, value, role):
@@ -239,11 +250,18 @@ class Runtime:
                     if record["type"] == "message"
                     else record["value"]
                 )
-                result = self._capture(role, result, value=value)
-                self.count(role, "cache_hits")
-                return result
             except (KeyError, ValueError, TypeError):
                 pass
+            else:
+                # A valid cached response still has to pass current evidence
+                # and checkpoint guards. A guard/storage failure is not a cache
+                # miss and must never trigger another paid request.
+                try:
+                    result = self._capture(role, result, value=value)
+                finally:
+                    self.persist()
+                self.count(role, "cache_hits")
+                return result
         provider = (
             spec.get("provider")
             or self.cfg.get("quick_think_provider")
@@ -266,7 +284,10 @@ class Runtime:
             result = result.model_copy(
                 update={"content": str(result.content) + "\n\n[" + note + "]"}
             )
-        result = self._capture(role, result, value=value)
+        try:
+            result = self._capture(role, result, value=value)
+        finally:
+            self.persist()
         if self.enabled:
             if isinstance(result, AIMessage):
                 record = {"key": key, "type": "message", "value": result.model_dump(mode="json")}
@@ -328,25 +349,31 @@ class Runtime:
             if not isinstance(result, GroundedSentimentReport):
                 raise ValueError("Antigravity report has no validated context receipt.")
             result, receipt = validate(result, self.quant, value or [])
-            self.grounding[role] = receipt
+            with self.lock:
+                self.grounding[role] = receipt
             self.emit(
                 "grounding",
                 {"role": role, "validated": True, "news_count": receipt["readback"]["news_count"]},
             )
         if role == "Portfolio Manager" and isinstance(result, ExecutablePortfolioDecision):
-            self.decision = result.model_dump(mode="json")
+            with self.lock:
+                self.decision = result.model_dump(mode="json")
         return result
 
 
 class TokenUsage(BaseCallbackHandler):
+    raise_error = True
+
     def __init__(self):
         self.lock = threading.Lock()
         self.roles = {}
         self.items = []
+        self.on_change = lambda: None
 
     def on_chat_model_start(self, serialized, messages, *, run_id, metadata=None, **kwargs):
         with self.lock:
             self.roles[str(run_id)] = metadata or {}
+        self.on_change()
 
     def on_llm_end(self, response, *, run_id, **kwargs):
         with self.lock:
@@ -364,8 +391,11 @@ class TokenUsage(BaseCallbackHandler):
                             "finish_reason": getattr(message, "response_metadata", {}).get(
                                 "finish_reason"
                             ),
+                            "has_tool_calls": bool(getattr(message, "tool_calls", None)),
                         }
                     )
+
+        self.on_change()
 
     def on_llm_error(self, error, *, run_id, **kwargs):
         with self.lock:
@@ -380,6 +410,8 @@ class TokenUsage(BaseCallbackHandler):
                     "error_type": type(error).__name__,
                 }
             )
+
+        self.on_change()
 
     def summary(self):
         with self.lock:

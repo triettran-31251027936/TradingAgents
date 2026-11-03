@@ -97,6 +97,7 @@ def reconcile_registered_shares(book, registry, profile, target, asof, preferred
             latest_registration_date=registry["latest_registration_date"],
             source_url=registry["source_url"],
             observed_at=registry["observed_at"],
+            registration_history_basis=registry.get("history_reconciliation"),
             capital_rounding_tolerance_vnd=tolerance,
         )
         if capital is None or abs(capital - expected) > tolerance:

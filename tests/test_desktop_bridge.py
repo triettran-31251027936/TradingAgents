@@ -123,7 +123,7 @@ def test_streamed_analysis_retains_checkpoint_memory_and_original_reports(deskto
     result = bridge.analyze(payload, cfg)
     graph = Graph.instances[0]
     calls = [call[0] for call in graph.calls]
-    assert calls == ['enter', 'initial', 'resume_input', 'stream', 'record', 'clear', 'exit', 'save']
+    assert calls == ['enter', 'initial', 'resume_input', 'stream', 'exit', 'save', 'record', 'clear']
     stream_input = next(call[1] for call in graph.calls if call[0] == 'stream')
     assert stream_input is None if resume else stream_input == {'initial': True}
     assert graph.calls[0][4].cash == 1000

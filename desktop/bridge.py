@@ -357,6 +357,10 @@ def analyze(payload, cfg):
         args = graph.propagator.get_graph_args(callbacks=callbacks)
         if tid:
             args["config"]["configurable"] = {"thread_id": tid}
+            if runtime:
+                runtime.bind_checkpoint(tid, usage, resuming=getattr(graph, "_resuming", False))
+            if getattr(graph, "_resuming", False):
+                state.update(graph.graph.get_state(args["config"]).values)
         graph_input = graph.checkpoint_input(initial)
         for _messages, chunk in graph.stream_run(graph_input, **args):
             if chunk:
@@ -387,8 +391,6 @@ def analyze(payload, cfg):
         if memory and published.get("Memory Log") != memory:
             emit("role_report", {"name": "Memory Log", "text": memory, "html": markdown(memory)})
             emit("node", {"name": "Memory Log", "status": "completed"})
-        graph.record_decision(ticker, trade_date, state)
-        graph.clear_checkpoint_on_success(ticker, trade_date, asset, portfolio)
     rating = run_rating(state)
     path = None
     extra = {}
@@ -479,6 +481,10 @@ def analyze(payload, cfg):
 
         result["preview"] = transient_report(ticker, state, graph.run_settings(), cfg, markdown)
     result.update(extra)
+    graph.record_decision(ticker, trade_date, state)
+    graph.clear_checkpoint_on_success(ticker, trade_date, asset, portfolio)
+    if runtime and runtime._checkpoint:
+        runtime._checkpoint.clear()
     return result
 
 

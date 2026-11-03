@@ -73,9 +73,44 @@ def parse(raw, ticker, asof):
         day = datetime.strptime(cells[5], "%d/%m/%Y").date().isoformat()
         if day > asof:
             raise ValueError("Future registration event")
-        history.append({"date": day, "change": integer(cells[3]), "reason": cells[2]})
-    if not history or total != count or sum(r["change"] for r in history) != count:
+        quantity = integer(cells[3])
+        history.append(
+            {
+                "date": day,
+                "change": quantity,
+                "reported_quantity": quantity,
+                "registration": cells[1],
+                "certificate": cells[4],
+                "reason": cells[2],
+            }
+        )
+    if not history or total != count:
         raise ValueError("Registry history does not reconcile to current registered shares")
+    quantity_sum = sum(r["reported_quantity"] for r in history)
+    method = "additive_registration_history"
+    if quantity_sum != count:
+        # VSDC can first register only an IPO auction tranche, then register
+        # the whole company after equitization. That second row replaces the
+        # tranche balance; it is not another incremental issuance. Require
+        # both explicit source descriptions and the complete later arithmetic,
+        # never choose an arbitrary subset that happens to match the total.
+        replacement = (
+            len(history) >= 2
+            and "cổ phiếu trúng đấu giá" in history[0]["reason"].casefold()
+            and history[1]["reason"].casefold() == "đăng ký sau khi cổ phần hóa"
+            and 0 < history[0]["reported_quantity"] < history[1]["reported_quantity"]
+            and history[0]["date"] < history[1]["date"]
+            and all(a["date"] <= b["date"] for a, b in zip(history[:-1], history[1:], strict=True))
+            and sum(r["reported_quantity"] for r in history[1:]) == count
+        )
+        if not replacement:
+            raise ValueError("Registry history does not reconcile to current registered shares")
+        method = "ipo_tranche_replaced_by_full_post_equitization_registration"
+        for row, kind in zip(
+            history[:2], ("ipo_auction_tranche", "whole_company_registration"), strict=True
+        ):
+            row["quantity_basis"] = kind
+            row["change"] = None  # Neither source quantity is a new incremental issuance.
     return {
         "ticker": ticker + ".VN",
         "isin": isin,
@@ -85,6 +120,12 @@ def parse(raw, ticker, asof):
         "registration_history": history,
         "latest_registration_date": max(r["date"] for r in history),
         "history_reconciled": True,
+        "history_reconciliation": {
+            "method": method,
+            "reported_quantity_sum": quantity_sum,
+            "current_total": count,
+            "scope": "Reconciles registered securities, not outstanding shares. An explicitly labelled post-equitization full registration replaces its preceding IPO auction tranche; original quantities remain retained.",
+        },
     }
 
 
