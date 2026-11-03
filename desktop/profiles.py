@@ -34,7 +34,7 @@ def balanced_routes(include_antigravity=True, role_names=None):
                 # Vietnamese analyst/debate reports hit 2048 even at low
                 # effort in installed acceptance. Keep memory inexpensive,
                 # without forcing truncated analysis through the quality gate.
-                "max_tokens": 1024 if role == "Memory Log" else 4096,
+                "max_tokens": 2048 if role == "Memory Log" else 4096,
                 "effort": "low",
             }
         elif role == "Sentiment Analyst" and include_antigravity:

@@ -130,7 +130,7 @@ the integration. Alpha Vantage remains optional.
 
 The balanced profile retains6 Codex/6 DeepSeek/1 agy. DeepSeek analysis gets a
 4096-token output ceiling after real2048-token reports were truncated even with
-low effort; Memory is capped at1024. The18-request cap, zero SDK retries and
+low effort; Memory is capped at2048. The18-request cap, zero SDK retries and
 incomplete-report execution gate remain. This increases permitted capacity,
 not the number of requests or a guarantee of complete output.
 
@@ -206,3 +206,14 @@ stock-minus-benchmark outcome across independent cells, not paper-account P&L.
 Provider failure messages returned by backtest/settlement pass through the same
 key-redaction function as top-level errors. Renderer QA uses explicitly labelled
 synthetic scores and must not be presented as a paid live backtest performance.
+
+### Complete memory reflections
+
+Memory output that ends with finish_reason=length is rejected before the
+original settlement writer can resolve an entry. The decision stays pending,
+no incomplete lesson is injected into future context, and the attempt still
+counts toward the paid budget. This also applies to a legacy partial response
+in the exact-request cache; a failed completeness check does not trigger a
+paid fallback. Memory's balanced output ceiling is2048 after a real1024-token
+reflection exhausted its budget (including reasoning); analysis stays4096.
+The request cap and provider allocation remain unchanged.

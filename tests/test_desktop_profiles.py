@@ -79,7 +79,7 @@ def test_every_paid_role_is_capped_without_sdk_retry():
     for role, spec in cfg["desktop_role_models"].items():
         if spec["provider"] == "deepseek":
             kwargs = constrain(cfg, spec)
-            assert kwargs["max_tokens"] == (1024 if role == "Memory Log" else 4096)
+            assert kwargs["max_tokens"] == (2048 if role == "Memory Log" else 4096)
             assert kwargs["llm_max_retries"] == 0
 
 

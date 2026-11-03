@@ -27,7 +27,7 @@ The latest user-selected profile balances the two primary providers:
 | Roles | Backend | Requested model |
 |---|---|---|
 | Fundamentals, Research Manager, Trader, Aggressive Risk, Conservative Risk, Portfolio Manager | Codex CLI | gpt-6.1-sol; high effort for PM, medium/low for other roles |
-| Market, News, Bull, Bear, Neutral Risk, Memory reflection | DeepSeek API | deepseek-flash (V4.1 Flash alias), low effort; max output4096 for analysis,1024 for Memory; no SDK retry |
+| Market, News, Bull, Bear, Neutral Risk, Memory reflection | DeepSeek API | deepseek-flash (V4.1 Flash alias), low effort; max output4096 for analysis,2048 for Memory; no SDK retry |
 | Sentiment with context readback | agy CLI | gemini-3.8-flash-high |
 
 
@@ -230,7 +230,7 @@ The installed runtime, example profile and UI presets now use 6 Codex /6 DeepSee
 through bridge metadata, preventing the UI from restoring the retired one-Bear
 allocation. Saving role assignments also saves the visible request/token limits.
 
-The paid request cap is18 per analysis, max output4096 tokens/request (Memory1024), with SDK
+The paid request cap is18 per analysis, max output4096 tokens/request (Memory2048), with SDK
 retries disabled. This accommodates two analysts' tool loops, two research
 turns, neutral risk and a reflection at the configured six-tool-round limit. Actual usage
 can differ: Memory only calls a model when due, tool rounds vary and multiple

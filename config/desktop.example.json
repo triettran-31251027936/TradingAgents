@@ -92,7 +92,7 @@
     "Memory Log": {
       "provider": "deepseek",
       "model": "deepseek-flash",
-      "max_tokens": 1024,
+      "max_tokens": 2048,
       "effort": "low"
     }
   }

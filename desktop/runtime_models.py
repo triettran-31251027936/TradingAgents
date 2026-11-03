@@ -306,6 +306,11 @@ class Runtime:
                     self.incomplete_roles[role] = "output_token_limit"
                 elif finish == "stop":
                     self.incomplete_roles.pop(role, None)
+            if role == "Memory Log" and finish == "length":
+                raise ValueError(
+                    "Phản tư Memory chạm giới hạn output, chưa phải bài học hoàn chỉnh. "
+                    "Giữ quyết định pending để đánh giá lại; không lưu lập luận bị cắt vào memory."
+                )
         if self.quant and role != "Memory Log":
             serialized = json.dumps(
                 request_messages(value or []), ensure_ascii=False, sort_keys=True, default=str
