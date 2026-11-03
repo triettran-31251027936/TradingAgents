@@ -173,3 +173,20 @@ capital, zero treasury/preferred capital and statement/registration dates must
 independently pass the existing valuation checks. The reconciliation method is
 included in the canonical context. Snapshot version16 prevents reuse of an
 older composite snapshot that withheld these inputs.
+
+### Empty provider responses
+
+DeepSeek adapters reject null completions, empty/invalid JSON and missing
+completion choices with a typed DeepSeekResponseError. Error messages do not
+echo provider response bodies. Both synchronous and asynchronous calls retain
+their failed usage receipts; the desktop checkpoint retains the paid attempt.
+No report, decision or automatic retry is fabricated. This improves failure
+handling, not provider availability. The cause of an earlier real endpoint
+returning None was not established by the response shape alone.
+
+Read Codex CLI availability using the same installed CLI's app-server
+account/rateLimits/read method when checking a live mixed-provider run. A rate
+snapshot from another desktop session is not sufficient evidence that this CLI
+has the same availability. This read-only probe initializes the protocol and
+reads limits only; it creates no thread/turn and consumes no inference tokens.
+It is an acceptance tool, not an automatically installed quota preflight.
