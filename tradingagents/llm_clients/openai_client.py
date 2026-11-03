@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -89,6 +90,10 @@ def _input_to_messages(input_: Any) -> list:
     return []
 
 
+class DeepSeekResponseError(ValueError):
+    """The endpoint supplied no usable completion; never fabricate a report."""
+
+
 class DeepSeekChatOpenAI(NormalizedChatOpenAI):
     """DeepSeek-specific overrides on top of the OpenAI-compatible client.
 
@@ -103,6 +108,24 @@ class DeepSeekChatOpenAI(NormalizedChatOpenAI):
     ``tool_choice`` parameter — is handled by the capability dispatch in
     ``NormalizedChatOpenAI.with_structured_output``, not here.
     """
+
+    def _generate(self, *args, **kwargs):
+        try:
+            return super()._generate(*args, **kwargs)
+        except json.JSONDecodeError:
+            raise DeepSeekResponseError(
+                "DeepSeek returned an empty or invalid JSON completion. No report was produced; "
+                "retain the checkpoint. Provider usage is unknown."
+            ) from None
+
+    async def _agenerate(self, *args, **kwargs):
+        try:
+            return await super()._agenerate(*args, **kwargs)
+        except json.JSONDecodeError:
+            raise DeepSeekResponseError(
+                "DeepSeek returned an empty or invalid JSON completion. No report was produced; "
+                "retain the checkpoint. Provider usage is unknown."
+            ) from None
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
@@ -121,7 +144,12 @@ class DeepSeekChatOpenAI(NormalizedChatOpenAI):
         return payload
 
     def _create_chat_result(self, response, generation_info=None):
-        chat_result = super()._create_chat_result(response, generation_info)
+        if response is None or not isinstance(response, dict) and not hasattr(response, "model_dump"):
+            raise DeepSeekResponseError(
+                "DeepSeek returned no valid completion object. No report was produced; "
+                "the attempt may have consumed usage. Preserve the checkpoint and inspect "
+                "provider availability before explicitly resuming."
+            )
         response_dict = (
             response
             if isinstance(response, dict)
@@ -129,6 +157,19 @@ class DeepSeekChatOpenAI(NormalizedChatOpenAI):
                 exclude={"choices": {"__all__": {"message": {"parsed"}}}}
             )
         )
+        choices = response_dict.get("choices")
+        if (
+            not isinstance(choices, list)
+            or not choices
+            or any(not isinstance(c, dict) or not isinstance(c.get("message"), dict) for c in choices)
+        ):
+            # Provider/proxy error bodies can contain request details or echoed
+            # credentials. Report only the failed response shape, never the body.
+            raise DeepSeekResponseError(
+                "DeepSeek returned a response without valid completion choices. "
+                "No report was produced; retain the checkpoint. Provider usage is unknown."
+            )
+        chat_result = super()._create_chat_result(response, generation_info)
         for generation, choice in zip(
             chat_result.generations, response_dict.get("choices", []), strict=False
         ):
