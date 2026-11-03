@@ -211,6 +211,7 @@ class Store:
             db.executescript("""CREATE TABLE IF NOT EXISTS account(id INTEGER PRIMARY KEY CHECK(id=1), initial_cash REAL NOT NULL, clock TEXT, version INTEGER NOT NULL, state TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY, report_id TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, approved_at TEXT, result TEXT);
             CREATE UNIQUE INDEX IF NOT EXISTS report_once ON orders(report_id);
+            CREATE TABLE IF NOT EXISTS publications(id TEXT PRIMARY KEY,payload TEXT NOT NULL,finished INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS consumed_bars(ticker TEXT NOT NULL, day TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(ticker,day));
             CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, event TEXT NOT NULL, order_id TEXT, details TEXT NOT NULL);""")
             db.execute(
@@ -339,9 +340,31 @@ class Store:
                     db.execute("RELEASE report_proposal")
                     return result
 
-                yield SimpleNamespace(proposal=proposal)
+                def receipt(identity, payload):
+                    db.execute("DELETE FROM publications WHERE id=? AND finished=1", (identity,))
+                    db.execute(
+                        "INSERT INTO publications(id,payload) VALUES(?,?)",
+                        (identity, json.dumps(payload, ensure_ascii=False, allow_nan=False)),
+                    )
+
+                yield SimpleNamespace(proposal=proposal, receipt=receipt)
         finally:
             db.close()
+
+    def pending_publication(self, identity):
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT payload FROM publications WHERE id=? AND finished=0", (identity,)
+            ).fetchone()
+            return json.loads(row["payload"]) if row else None
+
+    def pending_publications(self):
+        with self.connect() as db:
+            return [row["id"] for row in db.execute("SELECT id FROM publications WHERE finished=0")]
+
+    def finish_publication(self, identity):
+        with self.connect() as db:
+            db.execute("UPDATE publications SET finished=1 WHERE id=?", (identity,))
 
     def proposal(self, report_id, decision, bundle, exchange, *, db=None):
         intent = decision["execution"]
@@ -402,6 +425,13 @@ class Store:
             )
             return self.preview(order["id"], db)
 
+    def publication_pending(self, order_id, db):
+        for row in db.execute("SELECT payload FROM publications WHERE finished=0"):
+            value = json.loads(row["payload"])
+            if value.get("result", {}).get("paper_proposal", {}).get("id") == order_id:
+                return True
+        return False
+
     def preview(self, order_id, db=None):
         own = db is None
         db = db or self.connect()
@@ -426,6 +456,7 @@ class Store:
                 "matching": "Virtual limit, at most1% of next observed daily volume, expires after first eligible session. No immediate fill or real exchange order.",
                 "settlement": book["settlement"],
                 "human_approval_required": True,
+                "publication_pending": self.publication_pending(order_id, db),
             }
             preview["preview_hash"] = digest(preview)
             return preview
@@ -453,6 +484,8 @@ class Store:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             preview = self.preview(order_id, db)
+            if preview["publication_pending"]:
+                raise ValueError("Báo cáo đang chờ phục hồi; hoàn tất phục hồi trước khi duyệt lệnh.")
             if preview["status"] != "PROPOSED":
                 raise ValueError("Lệnh đã được xử lý; không gửi trùng.")
             if not hmac.compare_digest(preview["preview_hash"], preview_hash):

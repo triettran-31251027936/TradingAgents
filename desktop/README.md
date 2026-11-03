@@ -240,10 +240,25 @@ an export exception after creating a proposal, then resume the original graph
 checkpoint without another model invocation. These are isolated synthetic
 fixtures, not market-price tests or executed paper trades.
 
-This is not an atomic transaction spanning the filesystem, memory log and graph
-checkpoint database. A crash after SQLite commit but before marker removal or
-checkpoint cleanup still needs recovery; the tests above do not prove that
-separate crash window closed.
+The filesystem, memory log and graph checkpoint database do not share one
+atomic commit. A committed analysis proposal now has a receipt in the same
+SQLite transaction: startup/retry verifies the saved artifact hashes, invokes
+the original decision recorder without constructing model clients, clears the
+original checkpoint and desktop metadata, then finishes the receipt. The
+original memory writer remains idempotent for a ticker/date.
+
+Tests cover process exit after commit/before marker removal and exceptions
+after recording, checkpoint deletion and metadata deletion. An advisory request
+lock prevents recovery of a still-running request across processes. Corrupted
+receipts/files remain pending with no paid fallback. Startup reports recovery
+failures without resetting the paper account. This does not guarantee recovery
+from arbitrary disk loss or a partially written native memory-log append.
+
+A proposal whose receipt is unfinished cannot be previewed for native consent
+or approved, even with a valid signature. Finishing recovery changes the live
+preview hash, requiring a fresh review. Recovery never approves, rejects or
+executes an order. Clearing graph checkpoints does not discard a committed
+proposal's receipt.
 
 ### Backtest role reports in the library
 
@@ -260,5 +275,4 @@ state and completed model receipts remain unchanged when exporting an old run.
 The publication marker also covers grid reports. Decision recording and
 checkpoint cleanup happen after report/evidence export; an export failure can
 resume the completed graph without another model invocation. The standalone
-upstream evaluator and its scoring remain unchanged. The separate post-commit
-paper-proposal crash window documented above remains open.
+upstream evaluator and its scoring remain unchanged. Committed paper-proposal recovery follows the receipt protocol above.

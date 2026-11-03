@@ -57,6 +57,8 @@ def test_failed_export_rolls_back_proposal_and_hides_partial_report(tmp_path, st
     ):
         proposal = writer.proposal("test", decision(), evidence(), "HOSE")
         assert proposal["status"] == "PROPOSED"
+        writer.receipt("test", {"report": "synthetic"})
+        assert store.pending_publication("test") is None
         # A second connection (including the approval UI) cannot observe it.
         assert store.snapshot() == original
         assert not hasattr(writer, "approve")
@@ -67,6 +69,7 @@ def test_failed_export_rolls_back_proposal_and_hides_partial_report(tmp_path, st
                 bridge.report_path("VHM.VN_test/complete_report.md", cfg)
         raise OSError("Synthetic export failure")
     assert store.snapshot() == original
+    assert store.pending_publication("test") is None
     assert digest(store.snapshot()) == digest(original)
     with store.connect() as db:
         assert db.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
@@ -137,3 +140,47 @@ with report_publication(folder, store) as writer:
     assert store.snapshot() == original
     assert bridge.history({"results_dir": str(folder.parent)}) == []
     assert (folder / ".publishing").is_file()
+
+
+def test_unfinished_publication_blocks_even_signed_consent_and_invalidates_old_preview(
+    tmp_path, monkeypatch
+):
+    import hashlib
+    import hmac
+
+    store = PracticeStore(tmp_path / "cache")
+    folder = tmp_path / "report"
+    folder.mkdir()
+    with integration.report_publication(folder, store) as writer:
+        proposed = writer.proposal("pending", decision(), evidence(), "HOSE")
+        writer.receipt("receipt", {"result": {"paper_proposal": proposed}})
+        (folder / "complete_report.md").write_text("# Synthetic complete report\n")
+    preview = store.preview(proposed["id"])
+    assert preview["publication_pending"]
+    monkeypatch.setattr(
+        bridge,
+        "config",
+        lambda: {
+            "data_cache_dir": str(tmp_path / "cache"),
+            "desktop_vietnam": {"paper_enabled": True},
+        },
+    )
+    with pytest.raises(ValueError, match="phục hồi"):
+        bridge.dispatch("paper_preview", {"id": proposed["id"]})
+    secret = "isolated-native-consent-test"
+    monkeypatch.setenv("TRADINGAGENTS_PAPER_APPROVAL_KEY", secret)
+    timestamp = 123456
+    signed = hmac.new(
+        secret.encode(),
+        f"{proposed['id']}|{preview['preview_hash']}|{timestamp}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    approval = {"timestamp": timestamp, "signature": signed}
+    with pytest.raises(ValueError, match="phục hồi"):
+        store.approve(proposed["id"], preview["preview_hash"], approval, now=timestamp)
+    store.finish_publication("receipt")
+    assert not store.preview(proposed["id"])["publication_pending"]
+    with pytest.raises(ValueError, match="duyệt lại"):
+        store.approve(proposed["id"], preview["preview_hash"], approval, now=timestamp)
+    assert store.snapshot()["orders"][0]["status"] == "PROPOSED"
+    assert store.snapshot()["cash"] == 3_000_000 and not store.snapshot()["positions"]

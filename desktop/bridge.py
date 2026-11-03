@@ -318,8 +318,8 @@ def callback():
     return Progress()
 
 
-def analyze(payload, cfg):
-    from tradingagents.graph.trading_graph import TradingAgentsGraph, _validate_trade_date
+def _analysis_request(payload):
+    from tradingagents.graph.trading_graph import _validate_trade_date
 
     options = {
         name: payload.get(name, default)
@@ -330,6 +330,30 @@ def analyze(payload, cfg):
             raise ValueError(f"{name} phải là boolean.")
     ticker, chosen, asset, portfolio = inputs(payload)
     trade_date = _validate_trade_date(payload.get("date", date.today().isoformat()))
+    return options, ticker, chosen, asset, portfolio, trade_date
+
+
+def analyze(payload, cfg):
+    from desktop.publication_recovery import identity, request_lock
+
+    request = _analysis_request(payload)
+    options, ticker, chosen, asset, portfolio, day = request
+    key = identity(cfg, ticker, day, chosen, asset, portfolio, options)
+    with request_lock(cfg, key):
+        return _analyze(request, cfg, key)
+
+
+def _analyze(request, cfg, publication_key):
+    from desktop.publication_recovery import eligible_store, finish, receipt, recover
+    from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+    options, ticker, chosen, asset, portfolio, trade_date = request
+    recovery_store = eligible_store(cfg, ticker, portfolio, options)
+    recovered = recover(recovery_store, publication_key, cfg, ticker, trade_date, TradingAgentsGraph)
+    if recovered is not None:
+        emit("progress", {"message": "Đã khôi phục báo cáo/đề xuất đã lưu; không gọi model hoặc tạo lệnh mới."})
+        return recovered
+    publication_value = None
     emit("started", {"ticker": ticker, "date": trade_date, "analysts": chosen})
     handler = callback()
     from desktop.runtime_models import TokenUsage
@@ -439,6 +463,16 @@ def analyze(payload, cfg):
                     raise ValueError("File báo cáo Memory không hợp lệ.")
                 temporary.write_text(memory, encoding="utf-8")
                 temporary.replace(folder / "memory.md")
+            if recovery_store is not None and publication is not None:
+                completed = {
+                    "ticker": ticker, "date": trade_date, "rating": rating, **options,
+                    "report_id": str(path.relative_to(Path(cfg["results_dir"]))), **extra,
+                }
+                publication_value = receipt(
+                    target, cfg, ticker, trade_date, graph._run_signature(asset, portfolio),
+                    graph.run_settings(), state, completed, runtime,
+                )
+                publication.receipt(publication_key, publication_value)
     if runtime and not options["save"]:
         import tempfile
 
@@ -493,6 +527,8 @@ def analyze(payload, cfg):
     graph.clear_checkpoint_on_success(ticker, trade_date, asset, portfolio)
     if runtime and runtime._checkpoint:
         runtime._checkpoint.clear()
+    if publication_value is not None:
+        finish(recovery_store, publication_key, publication_value, cfg)
     return result
 
 
@@ -543,7 +579,10 @@ def dispatch(action, payload):
         if action == "paper_snapshot":
             return store.snapshot()
         if action == "paper_preview":
-            return store.preview(payload.get("id", ""))
+            preview = store.preview(payload.get("id", ""))
+            if preview["publication_pending"]:
+                raise ValueError("Báo cáo đang chờ phục hồi; hoàn tất phục hồi trước khi duyệt lệnh.")
+            return preview
         if action == "paper_approve":
             return store.approve(
                 payload.get("id", ""), payload.get("preview_hash", ""), payload.get("approval")
@@ -606,6 +645,12 @@ def dispatch(action, payload):
             return subscription.list_models()
         raise ValueError("Thao tác Subscription không hợp lệ.")
     if action == "meta":
+        from desktop.publication_recovery import resume_pending
+        from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+        recovery_status = resume_pending(cfg, TradingAgentsGraph)
+        if recovery_status["failed"]:
+            emit("warning", {"message": "Có báo cáo/đề xuất chưa phục hồi được; giữ biên nhận và chặn duyệt lệnh liên quan để kiểm tra."})
         import tradingagents
         from desktop.profiles import BALANCED_BUDGET, balanced_routes
         from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
@@ -631,6 +676,7 @@ def dispatch(action, payload):
             },
             "today": date.today().isoformat(),
             "history": history(cfg),
+            "publication_recovery": recovery_status,
         }
     if action == "save_config":
         return save_config(payload.get("config"))

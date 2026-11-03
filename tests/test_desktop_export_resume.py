@@ -56,7 +56,7 @@ def fixture_graph(monkeypatch, control):
                             },
                         ),
                     ),
-                    "Synthetic evidence",
+                    runtime.prompt("Synthetic evidence", "Market Analyst"),
                     {},
                 )
                 return {"market_report": "Synthetic partial"}
@@ -80,11 +80,15 @@ def fixture_graph(monkeypatch, control):
                         },
                     )
                 )
-                runtime._capture("Portfolio Manager", value)
+                runtime._capture(
+                    "Portfolio Manager",
+                    value,
+                    value=runtime.prompt("Synthetic manager", "Portfolio Manager"),
+                )
                 runtime.persist()
                 return {
-                    "final_trade_decision": "Rating: Hold\nSynthetic decision",
-                    "final_rating": "Hold",
+                    "final_trade_decision": f"Rating: {value.rating}\nSynthetic decision",
+                    "final_rating": value.rating,
                 }
 
             builder = StateGraph(State)
@@ -346,3 +350,132 @@ def test_paper_export_failure_resumes_same_graph_without_duplicate_proposal(tmp_
     assert book["cash"] == 3_000_000 and book["positions"] == {}
     assert len(bridge.history(cfg)) == 1
     assert not list((Path(cfg["data_cache_dir"]) / "desktop-checkpoints").glob("*.json"))
+
+
+@pytest.mark.parametrize("stage", ["marker", "record", "clear", "metadata"])
+def test_committed_publication_recovers_before_constructing_any_new_models(
+    tmp_path, monkeypatch, stage
+):
+    import json
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from desktop import vietnam
+    from desktop.practice import PracticeStore
+    from desktop.runtime_checkpoint import RuntimeCheckpoint
+    from tradingagents.memory import TradingMemoryLog
+
+    today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date().isoformat()
+    control = {"market": 0, "manager": 0, "record": 0, "runtimes": [], "finish_reason": "stop"}
+    control["decision"] = {
+        "rating": "Overweight",
+        "executive_summary": "Synthetic",
+        "investment_thesis": "Synthetic",
+        "execution": {
+            "action": "Buy",
+            "quantity": 100,
+            "limit_price": 1000,
+            "rationale": "Isolated synthetic receipt test",
+            "data_gaps": [],
+        },
+    }
+    Base = fixture_graph(monkeypatch, control)
+    crash = {"enabled": True}
+
+    class Graph(Base):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.memory_log = TradingMemoryLog(self.config)
+
+        def record_decision(self, ticker, day, state):
+            control["record"] += 1
+            self.memory_log.store_decision(
+                ticker, day, state["final_trade_decision"], rating=state["final_rating"]
+            )
+            if stage == "record" and crash["enabled"]:
+                raise OSError("Synthetic committed crash")
+
+        def clear_checkpoint_on_success(self, *args, **kwargs):
+            super().clear_checkpoint_on_success(*args, **kwargs)
+            if stage == "clear" and crash["enabled"]:
+                raise OSError("Synthetic committed crash")
+
+    original_unlink = Path.unlink
+
+    def unlink(path, *args, **kwargs):
+        if stage == "marker" and path.name == ".publishing" and crash["enabled"]:
+            raise OSError("Synthetic committed crash")
+        return original_unlink(path, *args, **kwargs)
+
+    original_clear = RuntimeCheckpoint.clear
+
+    def metadata_clear(checkpoint):
+        original_clear(checkpoint)
+        if stage == "metadata" and crash["enabled"]:
+            raise OSError("Synthetic committed crash")
+
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    cfg.update(
+        checkpoint_enabled=True,
+        data_cache_dir=str(tmp_path / "cache"),
+        results_dir=str(tmp_path / "reports"),
+        memory_log_path=str(tmp_path / "memory.md"),
+        desktop_usage={"enabled": True, "cache_enabled": False},
+        desktop_budget={"enabled": True, "deepseek_max_requests": 1},
+        desktop_vietnam={"enabled": True, "paper_enabled": True},
+    )
+    quant = {
+        "ticker": "VHM.VN",
+        "analysis_date": today,
+        "exchange": "HOSE",
+        "company_name": "Synthetic VHM fixture",
+        "fingerprint": "synthetic-not-market-data",
+        "prices": [{"date": today, "close": 1000}],
+        "metrics": {
+            key: {
+                "value": 1,
+                "unit": "synthetic",
+                "asof": today,
+                "formula": "synthetic",
+                "source": "fixture",
+            }
+            for key in ("close", "adv20", "volatility20_annual", "historical_var95_1d")
+        },
+        "missing": [],
+        "warnings": [],
+        "basis": [],
+        "sources": [],
+    }
+    monkeypatch.setattr(vietnam, "load", lambda *a, **kw: copy.deepcopy(quant))
+    monkeypatch.setattr(trading_graph, "TradingAgentsGraph", Graph)
+    monkeypatch.setattr(bridge, "emit", lambda *a: None)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    monkeypatch.setattr(RuntimeCheckpoint, "clear", metadata_clear)
+    payload = {"ticker": "VHM.VN", "date": today, "analysts": ["market"]}
+    with pytest.raises(OSError, match="Synthetic committed crash"):
+        bridge.analyze(payload, cfg)
+    store = PracticeStore(cfg["data_cache_dir"])
+    committed_book = store.snapshot()
+    assert (
+        len(committed_book["orders"]) == 1 and committed_book["orders"][0]["status"] == "PROPOSED"
+    )
+    with store.connect() as db:
+        row = db.execute("SELECT id,payload,finished FROM publications").fetchone()
+        assert row["finished"] == 0
+        value = json.loads(row["payload"])
+        key = row["id"]
+    assert control["market"] == control["manager"] == 1
+    attempts = value["result"]["paid_budget"]
+    crash["enabled"] = False
+    result = bridge.analyze(payload, cfg)
+    assert result["recovered_publication"] and len(Graph.instances) == 1
+    assert control["market"] == control["manager"] == 1
+    assert store.snapshot() == committed_book
+    assert result["paid_budget"] == attempts
+    assert result["paper_proposal"]["id"] == committed_book["orders"][0]["id"]
+    assert len(TradingMemoryLog(cfg).load_entries()) == 1
+    assert store.pending_publication(key) is None
+    assert checkpoint_step(cfg["data_cache_dir"], "VHM.VN", today, value["run_signature"]) is None
+    assert not list((Path(cfg["data_cache_dir"]) / "desktop-checkpoints").glob("*.json"))
+    assert len(bridge.history(cfg)) == 1
+    assert store.snapshot()["cash"] == 3_000_000 and not store.snapshot()["positions"]
