@@ -244,3 +244,21 @@ This is not an atomic transaction spanning the filesystem, memory log and graph
 checkpoint database. A crash after SQLite commit but before marker removal or
 checkpoint cleanup still needs recovery; the tests above do not prove that
 separate crash window closed.
+
+### Backtest role reports in the library
+
+Each completed grid cell now exports the original full Markdown/HTML report
+and individual role files beside its quantitative evidence. These reports use
+the existing history/reader interface and are labelled as retrospective,
+independent evaluations rather than account P&L. No paper proposal is created.
+
+The cell's Memory report shows only context supplied at analysis time. A legacy
+state log that omitted Memory fields gets an explicit unavailable-context note;
+its later outcome/reflection is not backfilled into that report. The original
+state and completed model receipts remain unchanged when exporting an old run.
+
+The publication marker also covers grid reports. Decision recording and
+checkpoint cleanup happen after report/evidence export; an export failure can
+resume the completed graph without another model invocation. The standalone
+upstream evaluator and its scoring remain unchanged. The separate post-commit
+paper-proposal crash window documented above remains open.

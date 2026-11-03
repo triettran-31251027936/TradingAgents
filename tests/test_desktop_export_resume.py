@@ -182,7 +182,10 @@ def test_completed_graph_survives_export_failure_and_retries_without_models(
         assert result[0]["market_report"] == "Synthetic partial"
 
 
-def test_real_grid_does_not_skip_a_cell_whose_evidence_export_failed(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure_stage", ["evidence", "report"])
+def test_real_grid_does_not_skip_a_cell_whose_evidence_export_failed(
+    tmp_path, monkeypatch, failure_stage
+):
     from tradingagents.memory import TradingMemoryLog
     from tradingagents.memory.settlement import Settlement
 
@@ -214,25 +217,37 @@ def test_real_grid_does_not_skip_a_cell_whose_evidence_export_failed(tmp_path, m
         desktop_vietnam={"enabled": False},
     )
     monkeypatch.setattr(backtest, "TradingAgentsGraph", GridGraph)
-    original = integration.artifacts
+    method = "artifacts" if failure_stage == "evidence" else "backtest_report"
+    original = getattr(integration, method)
     fail = {"enabled": True}
 
     def export(*args, **kwargs):
+        value = original(*args, **kwargs)
         if fail["enabled"]:
             raise OSError("Synthetic evidence export failure")
-        return original(*args, **kwargs)
+        return value
 
-    monkeypatch.setattr(integration, "artifacts", export)
+    monkeypatch.setattr(integration, method, export)
     with integration.backtest_scope(cfg, lambda *args: None):
         first = backtest.run_backtest(["BSR.VN"], ["2026-01-09"], cfg, run_id="export_resume")
     assert first.cells_run == 0 and len(first.failures) == 1
     assert not TradingMemoryLog({"memory_log_path": str(first.log_path)}).load_entries()
     assert control["record"] == 0
+    assert bridge.history(cfg) == []
+    assert list(Path(cfg["results_dir"]).rglob(".publishing"))
     fail["enabled"] = False
     with integration.backtest_scope(cfg, lambda *args: None):
         resumed = backtest.run_backtest(["BSR.VN"], ["2026-01-09"], cfg, run_id="export_resume")
     assert resumed.cells_run == 1 and resumed.skipped == 0 and not resumed.failures
     assert control["market"] == control["manager"] == control["record"] == 1
+    reports = bridge.history(cfg)
+    assert len(reports) == 1 and reports[0]["backtest"]
+    report = bridge.report_path(reports[0]["id"], cfg)
+    assert report.with_suffix(".html").is_file()
+    assert (report.parent / "1_analysts/market.md").read_text() == "Synthetic partial"
+    assert (report.parent / "5_portfolio/decision.md").is_file()
+    assert (report.parent / "integration.json").is_file()
+    assert not (report.parent / ".publishing").exists()
     assert len(TradingMemoryLog({"memory_log_path": str(resumed.log_path)}).load_entries()) == 1
     assert not list((tmp_path / "cache/desktop-checkpoints").glob("*.json"))
 

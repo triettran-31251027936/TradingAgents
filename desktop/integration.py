@@ -209,6 +209,9 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
 
     q = result.get("quantitative")
     text = "## Canonical evidence and virtual execution\n\n"
+    evaluation = result.get("evaluation_context")
+    if evaluation:
+        text += "### Backtest · phân tích hồi cứu\n\n" + cell(evaluation["scope"]) + "\n\n"
     if q:
         text += f"Ticker: {q['ticker']} · latest completed quote: {q['quote_date']}\n\n"
         profile = q.get("company_profile") or {}
@@ -376,6 +379,49 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
         )
 
 
+def backtest_report(folder, ticker, state, settings, cfg, extra):
+    """Expose a finished grid cell through the same report reader as analysis.
+
+    Memory here is only the context supplied to this cell, never its later
+    outcome/reflection. Reports do not create a paper proposal for a grid cell.
+    """
+    from desktop.bridge import role_reports
+    from desktop.report_runtime import enrich_report
+    from tradingagents.reporting import write_report_tree
+
+    extra = {
+        **extra,
+        "evaluation_context": {
+            "kind": "retrospective_grid_cell",
+            "analysis_date": state.get("trade_date"),
+            "scope": "Ô đánh giá độc lập, không phải lợi nhuận danh mục hay dự báo được lưu tại thời điểm quá khứ. Nguồn văn bản không được lưu nguyên trạng đầy đủ; dữ liệu thiếu vintage lịch sử được giữ là thiếu. Memory trong báo cáo là context được cung cấp khi phân tích, không phải bài học biết sau kết quả giá.",
+        },
+    }
+    vietnam.write_json(folder / "integration.json", extra)
+    path = write_report_tree(state, ticker, folder, settings=settings, html=True)
+    enrich_report(path, ticker, state, settings, cfg, html=True)
+    append_evidence(path, ticker, state, settings, extra, html=True)
+    memory = role_reports(state).get("Memory Log")
+    if memory is None:
+        memory = (
+            "# Memory & Reflection\n\n"
+            "Bản state được lưu không giữ context Memory của lượt phân tích này. "
+            "Không thể tái dựng nội dung đã cung cấp từ state đó. "
+            "Bài học hình thành sau kết quả giá không được đưa ngược vào context phân tích."
+        )
+    if memory:
+        memory_folder = folder / "6_memory"
+        if not memory_folder.resolve().is_relative_to(folder.resolve()):
+            raise ValueError("Thư mục báo cáo Memory không hợp lệ.")
+        memory_folder.mkdir(exist_ok=True)
+        temporary = memory_folder / "memory.md.tmp"
+        if temporary.is_symlink():
+            raise ValueError("File báo cáo Memory không hợp lệ.")
+        temporary.write_text(memory, encoding="utf-8")
+        temporary.replace(memory_folder / "memory.md")
+    return path
+
+
 @contextmanager
 def backtest_scope(cfg, emit):
     """Keep upstream grid/resume/settlement; provide a dated transport per cell."""
@@ -454,7 +500,13 @@ def backtest_scope(cfg, emit):
                 Path(self.config["results_dir"]) / "evidence" / safe_ticker_component(ticker) / asof
             )
             folder.mkdir(parents=True, exist_ok=True)
-            artifacts(folder, quant, runtime, counter, None, "backtest/" + ticker + "/" + asof)
+            with report_publication(folder, None):
+                extra = artifacts(
+                    folder, quant, runtime, counter, None, "backtest/" + ticker + "/" + asof
+                )
+                backtest_report(
+                    folder, ticker, result[0], self.run_settings(), self.config, extra
+                )
             if self._desktop_pending_record:
                 super().record_decision(*self._desktop_pending_record)
             if self._desktop_pending_clear:

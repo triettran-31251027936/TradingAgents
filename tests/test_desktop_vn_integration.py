@@ -273,6 +273,9 @@ def test_backtest_uses_separate_dated_bundle_and_restores_factory(tmp_path, monk
             self.config = config
             self.resolve_instrument_context = lambda *a: "Original identity"
 
+        def run_settings(self):
+            return {}
+
         def propagate(self, ticker, asof, asset_type="stock", portfolio=None):
             from tradingagents.dataflows import router
 
@@ -306,6 +309,9 @@ def test_backtest_uses_separate_dated_bundle_and_restores_factory(tmp_path, monk
     monkeypatch.setattr(backtest, "TradingAgentsGraph", Original)
     monkeypatch.setattr(vietnam, "load", source)
     monkeypatch.setattr(integration, "apply_role_models", lambda *a, **kw: None)
+    # This fixture isolates dated transport; actual report export and resume
+    # are exercised with the native graph in test_desktop_export_resume.py.
+    monkeypatch.setattr(integration, "backtest_report", lambda *a, **kw: None)
     cfg = {
         "desktop_vietnam": {"enabled": True},
         "data_cache_dir": str(tmp_path / "cache"),
