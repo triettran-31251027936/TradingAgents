@@ -223,3 +223,24 @@ the unchanged upstream evaluator excludes the current Vietnamese session, not
 the UTC day. Query end dates include holiday slack and may be in the future;
 the snapshot cutoff/cache date is clamped to the current Vietnamese date.
 This does not invent future prices or change the original holding-window rule.
+
+### Report publication and paper proposals
+
+After inference finishes, the desktop holds a short SQLite transaction while
+writing the report, evidence and Memory artifact. A proposal remains invisible
+to other connections until these exports succeed. An export exception rolls
+back the proposal, audit and account changes; rejected proposals use a savepoint
+so a caught validation error cannot commit intermediate account changes.
+No approval or execution method is exposed to the report writer.
+
+A `.publishing` marker keeps interrupted or failed report directories out of
+history and prevents opening them as completed reports. Their files remain on
+disk for diagnosis. Tests cover a real process exit during this transaction and
+an export exception after creating a proposal, then resume the original graph
+checkpoint without another model invocation. These are isolated synthetic
+fixtures, not market-price tests or executed paper trades.
+
+This is not an atomic transaction spanning the filesystem, memory log and graph
+checkpoint database. A crash after SQLite commit but before marker removal or
+checkpoint cleanup still needs recovery; the tests above do not prove that
+separate crash window closed.

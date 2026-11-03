@@ -155,7 +155,12 @@ def save_config(value):
 def report_path(identifier, cfg):
     root = Path(cfg["results_dir"]).resolve()
     path = (root / identifier).resolve()
-    if not path.is_relative_to(root) or path.name != "complete_report.md" or not path.is_file():
+    if (
+        not path.is_relative_to(root)
+        or path.name != "complete_report.md"
+        or not path.is_file()
+        or (path.parent / ".publishing").exists()
+    ):
         raise ValueError("Báo cáo không hợp lệ.")
     return path
 
@@ -163,7 +168,9 @@ def report_path(identifier, cfg):
 def history(cfg):
     root = Path(cfg["results_dir"])
     reports = sorted(
-        root.rglob("complete_report.md"), key=lambda p: p.stat().st_mtime, reverse=True
+        (p for p in root.rglob("complete_report.md") if not (p.parent / ".publishing").exists()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
     )
     items = []
     for path in reports[:200]:
@@ -336,7 +343,7 @@ def analyze(payload, cfg):
     ):
         callbacks.append(usage)
     graph = TradingAgentsGraph(chosen, config=cfg, callbacks=callbacks)
-    from desktop.integration import append_evidence, artifacts, prepare
+    from desktop.integration import append_evidence, artifacts, prepare, report_publication
     from desktop.vietnam import settlement_scope, vendor_scope
 
     quant, runtime, portfolio, paper = prepare(
@@ -405,32 +412,33 @@ def analyze(payload, cfg):
                 continue
         else:
             raise RuntimeError("Không tạo được thư mục báo cáo mới.")
-        path = graph.save_reports(state, ticker, target, html=options["html"])
-        from desktop.report_runtime import enrich_report
+        with report_publication(target, paper) as publication:
+            path = graph.save_reports(state, ticker, target, html=options["html"])
+            from desktop.report_runtime import enrich_report
 
-        enrich_report(path, ticker, state, graph.run_settings(), cfg, html=options["html"])
-        if runtime:
-            extra = artifacts(
-                path.parent,
-                quant,
-                runtime,
-                usage,
-                paper,
-                str(path.relative_to(Path(cfg["results_dir"]))),
-            )
-            append_evidence(path, ticker, state, graph.run_settings(), extra, html=options["html"])
-        memory = role_reports(state).get("Memory Log")
-        if memory:
-            folder = path.parent / "6_memory"
-            if not folder.resolve().is_relative_to(path.parent.resolve()):
-                raise ValueError("Thư mục báo cáo Memory không hợp lệ.")
-            folder.mkdir(exist_ok=True)
-            # Atomic replacement also avoids following a pre-existing file symlink.
-            temporary = folder / "memory.md.tmp"
-            if temporary.is_symlink():
-                raise ValueError("File báo cáo Memory không hợp lệ.")
-            temporary.write_text(memory, encoding="utf-8")
-            temporary.replace(folder / "memory.md")
+            enrich_report(path, ticker, state, graph.run_settings(), cfg, html=options["html"])
+            if runtime:
+                extra = artifacts(
+                    path.parent,
+                    quant,
+                    runtime,
+                    usage,
+                    publication,
+                    str(path.relative_to(Path(cfg["results_dir"]))),
+                )
+                append_evidence(path, ticker, state, graph.run_settings(), extra, html=options["html"])
+            memory = role_reports(state).get("Memory Log")
+            if memory:
+                folder = path.parent / "6_memory"
+                if not folder.resolve().is_relative_to(path.parent.resolve()):
+                    raise ValueError("Thư mục báo cáo Memory không hợp lệ.")
+                folder.mkdir(exist_ok=True)
+                # Atomic replacement also avoids following a pre-existing file symlink.
+                temporary = folder / "memory.md.tmp"
+                if temporary.is_symlink():
+                    raise ValueError("File báo cáo Memory không hợp lệ.")
+                temporary.write_text(memory, encoding="utf-8")
+                temporary.replace(folder / "memory.md")
     if runtime and not options["save"]:
         import tempfile
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from desktop import vietnam
@@ -112,6 +112,16 @@ def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper
     )
     apply_role_models(graph, cfg.get("desktop_role_models", {}), callbacks, runtime=runtime)
     return quant, runtime, portfolio, store
+
+
+@contextmanager
+def report_publication(folder, store):
+    """Incomplete exports stay inspectable on disk but are never listed as ready."""
+    marker = folder / ".publishing"
+    marker.write_text("Report publication incomplete; checkpoint retained.\n", encoding="utf-8")
+    with store.publication() if store else nullcontext(None) as writer:
+        yield writer
+    marker.unlink()
 
 
 def artifacts(folder, quant, runtime, usage, store, report_id):

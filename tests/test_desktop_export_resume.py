@@ -51,7 +51,9 @@ def fixture_graph(monkeypatch, control):
                     SimpleNamespace(
                         invoke=lambda *a, **kw: AIMessage(
                             content="Synthetic partial",
-                            response_metadata={"finish_reason": "length"},
+                            response_metadata={
+                                "finish_reason": control.get("finish_reason", "length")
+                            },
                         ),
                     ),
                     "Synthetic evidence",
@@ -62,17 +64,21 @@ def fixture_graph(monkeypatch, control):
             def manager(state):
                 control["manager"] += 1
                 runtime = control["runtimes"][-1]
-                value = ExecutablePortfolioDecision(
-                    rating="Hold",
-                    executive_summary="Synthetic",
-                    investment_thesis="Synthetic",
-                    execution={
-                        "action": "Hold",
-                        "quantity": 0,
-                        "limit_price": None,
-                        "rationale": "Synthetic",
-                        "data_gaps": [],
-                    },
+                value = (
+                    ExecutablePortfolioDecision(**control["decision"])
+                    if "decision" in control
+                    else ExecutablePortfolioDecision(
+                        rating="Hold",
+                        executive_summary="Synthetic",
+                        investment_thesis="Synthetic",
+                        execution={
+                            "action": "Hold",
+                            "quantity": 0,
+                            "limit_price": None,
+                            "rationale": "Synthetic",
+                            "data_gaps": [],
+                        },
+                    )
                 )
                 runtime._capture("Portfolio Manager", value)
                 runtime.persist()
@@ -190,7 +196,9 @@ def test_real_grid_does_not_skip_a_cell_whose_evidence_export_failed(tmp_path, m
 
         def record_decision(self, ticker, asof, state):
             control["record"] += 1
-            self.memory_log.store_decision(ticker, asof, state["final_trade_decision"], rating="Hold")
+            self.memory_log.store_decision(
+                ticker, asof, state["final_trade_decision"], rating="Hold"
+            )
 
         def settle_pending(self, ticker):
             # Outcome collection/reflection is outside this export-resume test.
@@ -198,7 +206,8 @@ def test_real_grid_does_not_skip_a_cell_whose_evidence_export_failed(tmp_path, m
 
     cfg = copy.deepcopy(DEFAULT_CONFIG)
     cfg.update(
-        checkpoint_enabled=True, data_cache_dir=str(tmp_path / "cache"),
+        checkpoint_enabled=True,
+        data_cache_dir=str(tmp_path / "cache"),
         results_dir=str(tmp_path / "reports"),
         desktop_usage={"enabled": True, "cache_enabled": False},
         desktop_budget={"enabled": True, "deepseek_max_requests": 1},
@@ -226,3 +235,99 @@ def test_real_grid_does_not_skip_a_cell_whose_evidence_export_failed(tmp_path, m
     assert control["market"] == control["manager"] == control["record"] == 1
     assert len(TradingMemoryLog({"memory_log_path": str(resumed.log_path)}).load_entries()) == 1
     assert not list((tmp_path / "cache/desktop-checkpoints").glob("*.json"))
+
+
+def test_paper_export_failure_resumes_same_graph_without_duplicate_proposal(tmp_path, monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from desktop.practice import PracticeStore
+    from desktop.vietnam import digest
+
+    today = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date().isoformat()
+    control = {"market": 0, "manager": 0, "record": 0, "runtimes": [], "finish_reason": "stop"}
+    control["decision"] = {
+        "rating": "Overweight",
+        "executive_summary": "Synthetic",
+        "investment_thesis": "Synthetic",
+        "execution": {
+            "action": "Buy",
+            "quantity": 100,
+            "limit_price": 1000,
+            "rationale": "Synthetic test only",
+            "data_gaps": [],
+        },
+    }
+    Graph = fixture_graph(monkeypatch, control)
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    cfg.update(
+        checkpoint_enabled=True,
+        data_cache_dir=str(tmp_path / "cache"),
+        results_dir=str(tmp_path / "reports"),
+        memory_log_path=str(tmp_path / "memory.md"),
+        desktop_usage={"enabled": True, "cache_enabled": False},
+        desktop_budget={"enabled": True, "deepseek_max_requests": 1},
+        desktop_vietnam={"enabled": False},
+    )
+    store = PracticeStore(cfg["data_cache_dir"])
+    quant = {
+        "ticker": "VHM.VN",
+        "analysis_date": today,
+        "exchange": "HOSE",
+        "fingerprint": "synthetic-not-market-data",
+        "prices": [{"date": today, "close": 1000}],
+        "metrics": {
+            key: {
+                "value": 1,
+                "unit": "synthetic",
+                "asof": today,
+                "formula": "synthetic",
+                "source": "isolated fixture",
+            }
+            for key in ("close", "adv20", "volatility20_annual", "historical_var95_1d")
+        },
+        "missing": [],
+        "warnings": [],
+        "basis": [],
+        "sources": [],
+    }
+    original_prepare = integration.prepare
+
+    def prepare(graph, *args, **kwargs):
+        _, runtime, portfolio, _ = original_prepare(graph, *args, **kwargs)
+        graph.config["desktop_paper_context_fingerprint"] = digest(store.snapshot())
+        graph.config["desktop_quant_fingerprint"] = quant["fingerprint"]
+        return quant, runtime, portfolio, store
+
+    monkeypatch.setattr(integration, "prepare", prepare)
+    monkeypatch.setattr(trading_graph, "TradingAgentsGraph", Graph)
+    monkeypatch.setattr(bridge, "emit", lambda *args: None)
+    fail = {"enabled": True}
+    append = integration.append_evidence
+
+    def append_then_fail(*args, **kwargs):
+        append(*args, **kwargs)
+        if fail["enabled"]:
+            raise OSError("Synthetic failure after proposal and complete report")
+
+    monkeypatch.setattr(integration, "append_evidence", append_then_fail)
+    payload = {"ticker": "VHM.VN", "date": today, "analysts": ["market"]}
+    original_book = store.snapshot()
+    with pytest.raises(OSError, match="Synthetic failure"):
+        bridge.analyze(payload, cfg)
+    assert store.snapshot() == original_book
+    assert control["record"] == 0
+    assert bridge.history(cfg) == []
+    assert list(Path(cfg["results_dir"]).rglob(".publishing"))
+    assert list((Path(cfg["data_cache_dir"]) / "desktop-checkpoints").glob("*.json"))
+    fail["enabled"] = False
+    result = bridge.analyze(payload, cfg)
+    assert control["market"] == control["manager"] == control["record"] == 1
+    assert control["runtimes"][-1].paid_budget.calls == 1
+    assert result["paper_proposal"]["status"] == "PROPOSED"
+    assert result["paper_proposal"]["human_approval_required"]
+    book = store.snapshot()
+    assert len(book["orders"]) == 1 and book["orders"][0]["status"] == "PROPOSED"
+    assert book["cash"] == 3_000_000 and book["positions"] == {}
+    assert len(bridge.history(cfg)) == 1
+    assert not list((Path(cfg["data_cache_dir"]) / "desktop-checkpoints").glob("*.json"))

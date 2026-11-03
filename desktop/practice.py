@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, time as daytime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -208,7 +209,7 @@ class PracticeStore(Store):
         )
         return book
 
-    def proposal(self, report_id, decision, bundle, exchange):
+    def proposal(self, report_id, decision, bundle, exchange, *, db=None):
         intent = decision["execution"]
         if intent["action"] == "Hold":
             return {"status": "NO_ORDER", "reason": intent["rationale"], "decision": decision}
@@ -219,8 +220,9 @@ class PracticeStore(Store):
             )
         if exchange not in ("HOSE", "HNX", "UPCOM"):
             raise ValueError("Chưa xác minh được sàn Việt Nam.")
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
+        with nullcontext(db) if db is not None else self.connect() as db:
+            if not db.in_transaction:
+                db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 "SELECT id FROM orders WHERE report_id=?", (report_id,)
             ).fetchone()

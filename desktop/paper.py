@@ -15,8 +15,10 @@ import os
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import backtrader as bt
 import pandas as pd
@@ -311,12 +313,43 @@ class Store:
             if own:
                 db.close()
 
-    def proposal(self, report_id, decision, bundle, exchange):
+    @contextmanager
+    def publication(self):
+        """Keep proposals private until all report exports succeed.
+
+        This short transaction starts after inference, never while a model runs.
+        Failure rolls back both the proposal and its audit/account changes.
+        The yielded writer exposes no approval or execution operation.
+        """
+        db = self.connect()
+        try:
+            with db:
+                db.execute("BEGIN IMMEDIATE")
+                def proposal(*args):
+                    # artifacts() may turn a validation ValueError into BLOCKED.
+                    # Keep a rejected proposal's intermediate writes out of the
+                    # surrounding successful report transaction as well.
+                    db.execute("SAVEPOINT report_proposal")
+                    try:
+                        result = self.proposal(*args, db=db)
+                    except BaseException:
+                        db.execute("ROLLBACK TO report_proposal")
+                        db.execute("RELEASE report_proposal")
+                        raise
+                    db.execute("RELEASE report_proposal")
+                    return result
+
+                yield SimpleNamespace(proposal=proposal)
+        finally:
+            db.close()
+
+    def proposal(self, report_id, decision, bundle, exchange, *, db=None):
         intent = decision["execution"]
         if intent["action"] == "Hold":
             return {"status": "NO_ORDER", "reason": intent["rationale"], "decision": decision}
-        with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
+        with nullcontext(db) if db is not None else self.connect() as db:
+            if not db.in_transaction:
+                db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 "SELECT id FROM orders WHERE report_id=?", (report_id,)
             ).fetchone()
