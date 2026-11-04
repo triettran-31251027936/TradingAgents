@@ -79,3 +79,53 @@ def test_no_candle_empty_range_and_date_guards(bundle):
         vn.indicator(bundle, "rsi", "2020-01-01")
     with pytest.raises(ValueError, match="Unsupported"):
         vn.indicator(bundle, "unknown", bundle["analysis_date"])
+
+
+def test_price_tool_preserves_inclusive_end_and_typed_no_data(bundle):
+    end = bundle["analysis_date"]
+    with vietnam.vendor_scope(bundle):
+        read = router.VENDOR_METHODS["get_stock_data"]["vietnam"]
+        text = read("VHM.VN", end, end)
+        assert "Total records: 1" in text and end in text
+        assert "bounded overlap" in read("VHM.VN", "2020-01-01", end)
+        with pytest.raises(NoMarketDataError):
+            read("VHM.VN", "2020-01-01", "2020-01-31")
+        with pytest.raises(ValueError, match="after"):
+            read("VHM.VN", end, "2099-01-01")
+        with pytest.raises(ValueError):
+            read("VHM.VN", "2026-01-03", "2026-01-02")
+        with pytest.raises(ValueError):
+            read("VHM.VN", "not-a-date", end)
+
+
+def test_same_original_staleness_boundary_for_price_and_indicator(bundle):
+    last = date.fromisoformat(bundle["prices"][-1]["date"])
+    bundle["analysis_date"] = (last + timedelta(days=11)).isoformat()
+    with pytest.raises(NoMarketDataError, match="stale"):
+        vn.prices(bundle, bundle["prices"][0]["date"], bundle["analysis_date"])
+    with pytest.raises(NoMarketDataError, match="stale"):
+        vn.indicator(bundle, "rsi", bundle["analysis_date"])
+    within = (last + timedelta(days=10)).isoformat()
+    assert "Total records:" in vn.prices(bundle, bundle["prices"][0]["date"], within)
+    assert numbers(vn.indicator(bundle, "rsi", within, 30))
+
+
+def test_empty_price_range_routes_to_original_no_data_signal(bundle, monkeypatch):
+    monkeypatch.setattr(router, "get_vendor", lambda *a: "vietnam")
+    with vietnam.vendor_scope(bundle):
+        result = router.route_to_vendor("get_stock_data", "VHM.VN", "2020-01-01", "2020-01-31")
+    assert result.startswith("NO_DATA_AVAILABLE:")
+    assert "Do not" in result and "fabricate" in result
+
+
+def test_stale_primary_snapshot_stops_before_fetching_other_sources(tmp_path, monkeypatch):
+    calls = []
+    def request(_session, url, payload=None):
+        calls.append(url)
+        return [{"t": [pd.Timestamp("2025-01-01", tz="UTC").timestamp()],
+                 "o": [100], "h": [101], "l": [99], "c": [100], "v": [1000]}]
+    monkeypatch.setattr(vietnam, "_request", request)
+    with pytest.raises(NoMarketDataError, match="stale"):
+        vietnam.load("VHM.VN", "2026-10-30", tmp_path, refresh=True)
+    assert calls == [vietnam.CHART]
+    assert not list(tmp_path.rglob("VHM_*.json"))

@@ -375,3 +375,16 @@ stockstats version returns raw MFI as 0–1 (multiply by 100 before conventional
 dates after the snapshot, unsupported names, empty historical series and invalid
 lookback types are rejected. Indicator values can still reflect the provider's
 historical price adjustments; formula parity is not predictive validation.
+
+### No-data and stale OHLCV handling
+
+v19 applies the original upstream OHLCV freshness guard to the canonical VN
+stock and benchmark series and to dated price/indicator tool requests. The
+upstream ten-calendar-day tolerance is reused without inventing a Vietnam
+holiday calendar; exceeding it is a no-data signal, not proof of delisting.
+An empty requested price range raises the original typed `NoMarketDataError`,
+allowing the existing router to return `NO_DATA_AVAILABLE` rather than an empty
+CSV. Dates are validated, end dates remain inclusive, and requests beyond the
+analysis snapshot are rejected. A stale benchmark is withheld with its warning;
+it is never used to compute an apparently current beta or return. v19 snapshots
+use a new cache identity, retaining earlier report evidence unchanged.

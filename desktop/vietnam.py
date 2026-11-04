@@ -26,10 +26,12 @@ import pandas as pd
 import requests
 from stockstats import wrap
 
+from tradingagents.dataflows.errors import NoMarketDataError
+
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 18
+VERSION = 19
 LOCK = threading.Lock()
 
 
@@ -596,6 +598,9 @@ def load(
             ),
             asof,
         )
+        from desktop.technical_vietnam import check_freshness
+
+        check_freshness(prices, ticker + ".VN", asof)
         news_start = (date.fromisoformat(asof) - timedelta(days=7)).isoformat()
         news, news_coverage = (
             ([], {})
@@ -622,7 +627,9 @@ def load(
         )
         try:
             benchmark = normalize_prices(benchmark_raw, asof) if benchmark_raw else []
-        except ValueError:
+            if benchmark:
+                check_freshness(benchmark, "VNINDEX.VN", asof)
+        except (ValueError, NoMarketDataError):
             benchmark = []
             warnings.append("VNINDEX unavailable")
         metadata = (
@@ -974,11 +981,9 @@ def vendor_scope(bundle, cache_dir=None):
 
     def prices(ticker, start, end):
         guard(ticker)
-        frame = pd.DataFrame([r for r in bundle["prices"] if start <= r["date"] <= end])
-        return (
-            "Source: Vietcap; prices VND/share, volume shares; completed candles only.\n"
-            + frame.to_csv(index=False)
-        )
+        from desktop.technical_vietnam import prices as read_prices
+
+        return read_prices(bundle, start, end)
 
     def indicator(ticker, name, asof, look_back_days=30):
         guard(ticker)
