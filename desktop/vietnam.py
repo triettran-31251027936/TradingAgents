@@ -1154,14 +1154,23 @@ def settlement_scope(cfg):
         # A truncated history must never settle a different holding window.
         if rows and data["prices"][0]["date"] > start:
             raise ValueError("Lịch sử Việt Nam không đủ cho cửa sổ settlement; giữ pending.")
-        return pd.Series(
+        values = pd.Series(
             [r["close"] for r in rows],
             index=pd.to_datetime([r["date"] for r in rows]).tz_localize(TZ),
             dtype=float,
         )
+        values.attrs["vn_snapshot_fingerprint"] = data.get("fingerprint")
+        values.attrs["vn_source_receipts"] = [
+            {key: row.get(key) for key in ("name", "retrieved_at", "sha256")}
+            for row in data.get("sources", []) if row.get("name") == "prices"
+        ]
+        return values
 
     settlement.get_closes = closes
     try:
-        yield
+        from desktop.settlement_evidence import capture
+
+        with capture(cfg, is_vietnam) as evidence:
+            yield evidence
     finally:
         settlement.get_closes = original

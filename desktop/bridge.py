@@ -380,7 +380,7 @@ def _analyze(request, cfg, publication_key):
     memory_finished = False
     with (
         vendor_scope(quant),
-        settlement_scope(cfg),
+        settlement_scope(cfg) as settlement_prices,
         run_config(graph.config),
         graph.checkpoint_scope(ticker, trade_date, asset, portfolio) as tid,
     ):
@@ -467,6 +467,7 @@ def _analyze(request, cfg, publication_key):
                 completed = {
                     "ticker": ticker, "date": trade_date, "rating": rating, **options,
                     "report_id": str(path.relative_to(Path(cfg["results_dir"]))), **extra,
+                    "settlement_price_evidence": settlement_prices or [],
                 }
                 publication_value = receipt(
                     target, cfg, ticker, trade_date, graph._run_signature(asset, portfolio),
@@ -523,6 +524,7 @@ def _analyze(request, cfg, publication_key):
 
         result["preview"] = transient_report(ticker, state, graph.run_settings(), cfg, markdown)
     result.update(extra)
+    result["settlement_price_evidence"] = settlement_prices or []
     graph.record_decision(ticker, trade_date, state)
     graph.clear_checkpoint_on_success(ticker, trade_date, asset, portfolio)
     if runtime and runtime._checkpoint:
@@ -789,9 +791,10 @@ def dispatch(action, payload):
         apply_role_models(graph, cfg.get("desktop_role_models", {}), [handler], runtime=runtime)
         from desktop.vietnam import settlement_scope
 
-        with settlement_scope(cfg):
+        with settlement_scope(cfg) as settlement_prices:
             result = graph.settle_all_pending() if all_tickers else graph.settle_pending(ticker)
         payload = asdict(result)
+        payload["settlement_price_evidence"] = settlement_prices or []
         payload["failed"] = [(ticker, day, clean_error(reason)) for ticker, day, reason in result.failed]
         return payload
     raise ValueError("Thao tác không được hỗ trợ.")

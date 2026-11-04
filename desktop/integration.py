@@ -525,6 +525,7 @@ def backtest_scope(cfg, emit):
                 "pass_id": self._desktop_settlement_pass,
                 "scope": "Current model counter includes the last cell plus final settlement; settlement only if all cells were skipped. Complements per-cell usage files, do not sum them twice.",
                 "settlements": self._desktop_settlements,
+                "settlement_price_evidence": list(price_receipts or []),
                 "usage": self._desktop_counter.summary(),
                 "roles": runtime.stats if runtime else {},
                 "paid_budget": runtime.paid_budget.summary() if runtime else None,
@@ -538,7 +539,7 @@ def backtest_scope(cfg, emit):
 
     backtest.TradingAgentsGraph = Graph
     try:
-        with vietnam.settlement_scope(cfg):
+        with vietnam.settlement_scope(cfg) as price_receipts:
             yield
     finally:
         backtest.TradingAgentsGraph = original

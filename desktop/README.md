@@ -276,3 +276,26 @@ The publication marker also covers grid reports. Decision recording and
 checkpoint cleanup happen after report/evidence export; an export failure can
 resume the completed graph without another model invocation. The standalone
 upstream evaluator and its scoring remain unchanged. Committed paper-proposal recovery follows the receipt protocol above.
+
+### Outcome price evidence
+
+Vietnam settlement now freezes the exact completed close series passed into the
+original evaluator, source snapshot fingerprints/retrieval receipts, selected
+stock/benchmark endpoint dates and closes, and the resulting raw/alpha returns.
+Each attempt writes a separate hash-addressed-content receipt under the managed
+cache's `settlement-evidence` directory (random unique filenames, content hash
+inside); repeat observations do not overwrite older receipts. Direct settlement
+results and backtest settlement audit files reference these receipts.
+
+A resolved price receipt means only that the outcome window was priced; it does
+not prove a later model reflection succeeded. Pending/failed price windows are
+explicit. Provider exception bodies are excluded. If receipt writing fails,
+the native settlement caller keeps the decision pending rather than claiming
+an audited outcome without its evidence. The original evaluator's formulas,
+calendar alignment and Memory scoring are unchanged.
+
+The adapter consumes Vietcap's observed close series. Adjustment factors,
+cash-dividend reinvestment and total-return semantics have not been independently
+verified. Receipts expose this limitation rather than certifying adjusted total
+return or account P&L. A source can revise historical rows; the saved receipt
+preserves the actual values used for that observation.
