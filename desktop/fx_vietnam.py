@@ -109,9 +109,21 @@ def load(asof, cache_dir, *, now=None, session=None):
             session = session or requests.Session()
             session.headers.update({"User-Agent": "TradingAgents-Research/0.8", "Accept": "*/*"})
             try:
-                response = session.get(URL, timeout=(8, 20))
-                response.raise_for_status()
-                raw = response.content
+                attempts = []
+                for attempt in range(2):
+                    try:
+                        response = session.get(URL, timeout=(8, 20))
+                        response.raise_for_status()
+                        raw = response.content
+                        attempts.append({"attempt": attempt + 1, "status": "received"})
+                        break
+                    except requests.exceptions.SSLError:
+                        # Certificate/handshake errors require investigation, not retries.
+                        raise
+                    except (requests.Timeout, requests.ConnectionError) as exc:
+                        attempts.append({"attempt": attempt + 1, "error": type(exc).__name__})
+                        if attempt == 1:
+                            raise
                 data = parse(raw, now)
                 digest = hashlib.sha256(raw).hexdigest()
                 snapshot = folder / (digest + ".snapshot.json")
@@ -129,6 +141,7 @@ def load(asof, cache_dir, *, now=None, session=None):
                 cached = {
                     **data,
                     "sha256": digest,
+                    "download_attempts": attempts,
                     "retrieved_at": now.isoformat(),
                     "first_observed_at": old["first_observed_at"] if old else now.isoformat(),
                 }
@@ -136,8 +149,12 @@ def load(asof, cache_dir, *, now=None, session=None):
                 write_json(path, cached)
             except (requests.RequestException, ValueError, ET.ParseError) as exc:
                 if not cached:
-                    return {**empty, "reason": type(exc).__name__}
-                cached = {**cached, "connection_error": type(exc).__name__}
+                    return {**empty, "reason": type(exc).__name__, "download_attempts": attempts}
+                cached = {
+                    **cached,
+                    "connection_error": type(exc).__name__,
+                    "download_attempts": attempts,
+                }
         raw_path = folder / (cached["sha256"] + ".xml")
         if raw_path.is_symlink():
             raise ValueError("Invalid FX cache path")

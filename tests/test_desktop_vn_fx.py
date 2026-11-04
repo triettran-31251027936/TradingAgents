@@ -55,7 +55,10 @@ class Session:
 def test_three_distinct_quotes_and_bank_clock():
     result = f.parse(xml(), NOW)
     assert result["currencies"]["USD"] == {
-        "name": "US DOLLAR", "cash_buy": 25570, "transfer_buy": 25600, "sell": 25980
+        "name": "US DOLLAR",
+        "cash_buy": 25570,
+        "transfer_buy": 25600,
+        "sell": 25980,
     }
     assert result["quote_time"] == "2026-10-30T16:39:01+07:00"
 
@@ -88,7 +91,7 @@ def test_public_feed_cache_and_failed_refresh_retain_timestamp(tmp_path):
     cached = f.load("2026-10-30", tmp_path, now=NOW + timedelta(minutes=10), session=session)
     assert session.calls == 0 and cached["quote_time"] == first["quote_time"]
     failed = f.load("2026-10-30", tmp_path, now=NOW + timedelta(hours=1), session=session)
-    assert session.calls == 1 and failed["status"] == "cached_source_error"
+    assert session.calls == 2 and failed["status"] == "cached_source_error"
     assert failed["retrieved_at"] == first["retrieved_at"]
     assert failed["currencies"] == first["currencies"]
 
@@ -129,3 +132,51 @@ def test_metrics_and_original_macro_tool_distinguish_retail_from_sbv(tmp_path):
         ]["cash_buy"]
         == 25570
     )
+
+
+class SequenceSession(Session):
+    def __init__(self, errors):
+        super().__init__()
+        self.errors = iter(errors)
+
+    def get(self, *args, **kwargs):
+        error = next(self.errors, None)
+        if error:
+            self.calls += 1
+            raise error
+        return super().get(*args, **kwargs)
+
+
+def test_transient_connect_timeout_recovers_without_missing_quotes(tmp_path):
+    session = SequenceSession([requests.ConnectTimeout("network timeout")])
+    result = f.load("2026-10-30", tmp_path, now=NOW, session=session)
+    assert session.calls == 2 and result["status"] == "available"
+    assert result["currencies"]["USD"]["sell"] == 25980
+    assert result["download_attempts"] == [
+        {"attempt": 1, "error": "ConnectTimeout"},
+        {"attempt": 2, "status": "received"},
+    ]
+    assert result["quote_time"] == "2026-10-30T16:39:01+07:00"
+
+
+def test_persistent_read_timeout_is_bounded_and_disclosed(tmp_path):
+    session = SequenceSession([requests.ReadTimeout("timeout")] * 3)
+    result = f.load("2026-10-30", tmp_path, now=NOW, session=session)
+    assert session.calls == 2 and result["status"] == "unavailable"
+    assert result["reason"] == "ReadTimeout" and len(result["download_attempts"]) == 2
+    assert all(m["value"] is None for m in f.metrics(result, "2026-10-30").values())
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        requests.HTTPError("403"),
+        requests.HTTPError("429"),
+        requests.exceptions.SSLError("certificate"),
+    ],
+)
+def test_http_denial_or_tls_failure_is_not_retried(tmp_path, error):
+    session = SequenceSession([error])
+    result = f.load("2026-10-30", tmp_path, now=NOW, session=session)
+    assert session.calls == 1 and result["status"] == "unavailable"
+    assert result["reason"] == type(error).__name__

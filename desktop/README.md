@@ -414,3 +414,11 @@ provider history, not an exhaustive or unrevised filing archive. Tables enter
 the model context only when its original tool is called; they are not copied
 automatically into every role's evidence capsule. Longer requests can consume
 more model tokens, and existing request/output caps remain in force.
+
+### Vietcombank reference-feed recovery
+
+The official XML feed retries a timeout or connection failure once (two attempts
+maximum). HTTP errors, including 403/429, invalid XML/quotes and TLS errors are
+not retried. Attempt receipts accompany the result; failed refreshes retain the
+original quote/retrieval timestamps and remain marked `cached_source_error`.
+This is retail reference FX, not an SBV central rate or an executable price.
