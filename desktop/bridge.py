@@ -718,6 +718,11 @@ def dispatch(action, payload):
                         "html": markdown(part.read_text(encoding="utf-8")),
                     }
                 )
+        from desktop.backtest_evaluation import section as evaluation_section
+
+        evaluation = evaluation_section(path, cfg)
+        if evaluation:
+            sections.append({**evaluation, "html": markdown(evaluation["text"])})
         metadata = path.parent / "execution.json"
         execution = (
             json.loads(metadata.read_text(encoding="utf-8"))

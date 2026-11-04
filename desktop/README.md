@@ -321,3 +321,19 @@ Primary download guidance: https://fred.stlouisfed.org/help/data/downloading/usi
 FRED also offers an official MCP connector without an API key, but it requires
 its own account and authorization; no account was created or connected by this
 change: https://fred.stlouisfed.org/help/data/connecting-fred-to-ai-services/FRED-MCP-Connector
+
+### Reading backtest outcomes after reopening a report
+
+The report reader adds a separate “Đánh giá sau phân tích” section for the
+standard grid report layout. It reads only that run's own outcome log, requires
+an exact ticker/date and decision-text match, and shows pending/resolved state,
+logged raw/alpha return, resolution date, later reflection and the original
+sweep scorer summary. Missing logs and mismatched decisions stay explicit.
+
+This is a current reader section, not a rewrite of the saved complete report,
+HTML export or the role Memory context. Later lessons are never inserted into
+analysis-time context. The original log rounds returns; its alpha and hit rates
+must not be presented as higher-precision source quotes or account P&L. The log
+does not retain a benchmark-name field, so the reader does not invent one from
+today's settings. Existing standalone HTML remains the original analysis report;
+select the outcome section inside the app to read later evaluation.
