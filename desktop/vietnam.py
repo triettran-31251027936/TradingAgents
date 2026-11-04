@@ -29,7 +29,7 @@ from stockstats import wrap
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 17
+VERSION = 18
 LOCK = threading.Lock()
 
 
@@ -982,15 +982,9 @@ def vendor_scope(bundle, cache_dir=None):
 
     def indicator(ticker, name, asof, look_back_days=30):
         guard(ticker)
-        frame = pd.DataFrame([r for r in bundle["prices"] if r["date"] <= asof]).set_index("date")
-        if name == "vwma":
-            values = (frame.close * frame.volume).rolling(20).sum() / frame.volume.rolling(20).sum()
-        else:
-            values = wrap(frame.copy())[name]
-        return (
-            "Source: Vietcap OHLCV; Python stockstats; VND except RSI.\n"
-            + values.tail(max(1, min(look_back_days, 252))).to_csv()
-        )
+        from desktop.technical_vietnam import indicator as read_indicator
+
+        return read_indicator(bundle, name, asof, look_back_days)
 
     def statement(kind):
         def read(ticker, freq="quarterly", curr_date=None):

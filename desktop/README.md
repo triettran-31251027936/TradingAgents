@@ -361,3 +361,17 @@ existing release filter. Original NSDP series and stale warnings remain visible
 separately; this does not claim that the SDMX source was refreshed or that a
 historical unrevised vintage was obtained. The v17 cache identity prevents reuse
 of an older aggregate snapshot that lacks these fields.
+
+### Technical-indicator contract on Vietnam data
+
+v18 routes all 13 upstream indicator names to stockstats on the same canonical
+completed VN candles. This includes the original VWMA formula/default window,
+instead of the former close-price 20-session substitution. `look_back_days` is
+an inclusive calendar-day range, matching upstream; absent candles are marked
+unavailable rather than extending the window to more trading sessions. RSI and
+MFI are labelled with the installed stockstats scales: RSI is 0–100, while this
+stockstats version returns raw MFI as 0–1 (multiply by 100 before conventional
+80/20 comparisons). Other supported indicators use VND/share. Future
+dates after the snapshot, unsupported names, empty historical series and invalid
+lookback types are rejected. Indicator values can still reflect the provider's
+historical price adjustments; formula parity is not predictive validation.
