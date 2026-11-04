@@ -299,3 +299,25 @@ cash-dividend reinvestment and total-return semantics have not been independentl
 verified. Receipts expose this limitation rather than certifying adjusted total
 return or account P&L. A source can revise historical rows; the saved receipt
 preserves the actual values used for that observation.
+
+### Live FRED data without an API key
+
+For a Vietnam analysis dated today, the existing macro tool can retrieve the
+original US/euro FRED series through FRED's official public CSV and series page
+when no `FRED_API_KEY` is configured. It validates series identity, units and
+frequency, retains source update/observation times, raw bounded CSV and source
+hashes, and caches the snapshot for15 minutes. Returned tables remain bounded
+to the original40-row limit. CPI index levels are not labelled inflation rates;
+US/euro aliases never become Vietnamese series.
+
+This is latest-revision data observed now, not an ALFRED historical vintage.
+Historical requests without a key remain explicitly unavailable without a CSV
+request; current data are never backdated. With a key configured, the original
+FRED API provider is used unchanged, including its vintage pin. Network/schema
+failure remains unavailable, not invented data. This extension applies only to
+the VN job transport; the standalone upstream FRED vendor is unchanged.
+
+Primary download guidance: https://fred.stlouisfed.org/help/data/downloading/using-the-download-data-link/
+FRED also offers an official MCP connector without an API key, but it requires
+its own account and authorization; no account was created or connected by this
+change: https://fred.stlouisfed.org/help/data/connecting-fred-to-ai-services/FRED-MCP-Connector

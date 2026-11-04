@@ -379,7 +379,7 @@ def _analyze(request, cfg, publication_key):
     state, published = {}, {}
     memory_finished = False
     with (
-        vendor_scope(quant),
+        vendor_scope(quant, cfg["data_cache_dir"]),
         settlement_scope(cfg) as settlement_prices,
         run_config(graph.config),
         graph.checkpoint_scope(ticker, trade_date, asset, portfolio) as tid,

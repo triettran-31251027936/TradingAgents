@@ -957,7 +957,7 @@ def capsule(bundle):
 
 
 @contextmanager
-def vendor_scope(bundle):
+def vendor_scope(bundle, cache_dir=None):
     """Keep upstream tools/nodes, replace only their VN data transport in this job."""
     if bundle is None:
         yield
@@ -1075,9 +1075,13 @@ def vendor_scope(bundle):
                 look_back_days,
             )
         # Existing FRED aliases retain their original country/series semantics.
-        return router.VENDOR_METHODS["get_macro_indicators"]["fred"](
-            indicator, asof, look_back_days
-        )
+        if cache_dir is None:
+            return router.VENDOR_METHODS["get_macro_indicators"]["fred"](
+                indicator, asof, look_back_days
+            )
+        from desktop.fred_public import get_macro_data
+
+        return get_macro_data(indicator, asof, look_back_days, cache_dir)
 
     def insider(ticker, as_of_date=None):
         guard(ticker)

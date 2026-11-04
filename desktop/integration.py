@@ -491,7 +491,7 @@ def backtest_scope(cfg, emit):
             self._desktop_counter, self._desktop_runtime = counter, runtime
             from tradingagents.dataflows.config import run_config
 
-            with vietnam.vendor_scope(quant), run_config(self.config):
+            with vietnam.vendor_scope(quant, self.config["data_cache_dir"]), run_config(self.config):
                 result = super().propagate(ticker, asof, asset_type, portfolio=portfolio)
             # Original reports/scoring remain; these are supporting audit files.
             from tradingagents.dataflows.symbols import safe_ticker_component
