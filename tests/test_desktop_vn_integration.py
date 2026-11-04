@@ -1,7 +1,9 @@
 """Behavioral checks for VN grounding and consent-gated virtual execution."""
 
+import csv
 import hashlib
 import hmac
+import io
 import json
 
 import pytest
@@ -384,7 +386,11 @@ def test_statement_compaction_keeps_all_labelled_values_and_zero(monkeypatch):
     )
     with vietnam.vendor_scope(q):
         text = router.VENDOR_METHODS["get_income_statement"]["vietnam"]("FPT.VN")
-    assert "Net sales [sales],123" in text and "Costs [cost],0" in text
+    rows = list(csv.DictReader(io.StringIO(text[text.index("Period / publication date"):])) )
+    assert rows == [{
+        "Period / publication date": "2026-Q3 public:2026-10-29",
+        "Net sales [sales]": "123", "Costs [cost]": "0",
+    }]
     assert "unlabelled_null" not in text and "Missing [empty]" not in text
 
 

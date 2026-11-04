@@ -7,9 +7,7 @@ No credentials, impersonation, rate-limit bypass or fallback to US fundamentals.
 
 from __future__ import annotations
 
-import csv
 import hashlib
-import io
 import json
 import math
 import re
@@ -31,7 +29,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 20
+VERSION = 21
 LOCK = threading.Lock()
 
 
@@ -1020,35 +1018,9 @@ def vendor_scope(bundle, cache_dir=None):
     def statement(kind):
         def read(ticker, freq="quarterly", curr_date=None):
             guard(ticker)
-            if freq not in ("annual", "quarterly"):
-                raise ValueError("Financial statement frequency must be annual or quarterly")
-            cutoff = curr_date or bundle["analysis_date"]
-            date.fromisoformat(cutoff)
-            if cutoff > bundle["analysis_date"]:
-                raise ValueError("Requested statement date is after the analysis snapshot")
-            period = "years" if freq == "annual" else "quarters"
-            book = bundle["statements"][kind]
-            rows = [r for r in book[period] if _published(r, cutoff)][-4:]
-            # Keep every labelled non-null field, but do not send the provider's
-            # unrelated null banking/insurance fields or repeat keys per period.
-            output = io.StringIO()
-            writer = csv.writer(output)
-            writer.writerow(
-                [
-                    "Line item / provider field",
-                    *[
-                        f"{r['yearReport']}{'-FY' if freq == 'annual' else '-Q' + str(r.get('lengthReport'))} public:{str(r['publicDate'])[:10]}"
-                        for r in rows
-                    ],
-                ]
-            )
-            for key, title in book["fields"].items():
-                if any(r.get(key) is not None for r in rows):
-                    writer.writerow([f"{title} [{key}]", *[r.get(key, "") for r in rows]])
-            return (
-                f"Vietcap financial statements published by {cutoff}; raw VND except per-share/ratio/share-count fields. Periods as reported; do not assume CFO quarter vs YTD. Empty cell is missing, not zero. Restatements are not a point-in-time archive.\n"
-                + output.getvalue()
-            )
+            from desktop.statements_vietnam import read as read_statement
+
+            return read_statement(bundle, kind, freq, curr_date)
 
         return read
 

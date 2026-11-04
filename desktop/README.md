@@ -400,3 +400,17 @@ completed-row counts are included in the shared evidence capsule. Long OHLCV
 tables are returned only when the original price tool requests them, rather
 than being repeated automatically in every model prompt. This does not obtain
 an unrevised historical data vintage or change the original graph/tool loop.
+
+### Full available statement history through the original tools
+
+v21 removes the VN statement tool's silent four-period slice. Income, balance
+sheet and cash-flow tools expose every provider record retained in the dated
+snapshot, using one period/publication record per CSV row, as upstream does for
+long SEC histories. All labelled fields having any non-null value are retained;
+zero stays zero, missing cells stay empty and unrelated all-null fields are
+omitted. Annual/quarterly and publication cutoffs still apply. Duplicate-period
+records remain visible with a warning against summing them. This is available
+provider history, not an exhaustive or unrevised filing archive. Tables enter
+the model context only when its original tool is called; they are not copied
+automatically into every role's evidence capsule. Longer requests can consume
+more model tokens, and existing request/output caps remain in force.
