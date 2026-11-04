@@ -337,3 +337,14 @@ must not be presented as higher-precision source quotes or account P&L. The log
 does not retain a benchmark-name field, so the reader does not invent one from
 today's settings. Existing standalone HTML remains the original analysis report;
 select the outcome section inside the app to read later evaluation.
+
+### Selecting ChatGPT Subscription for the whole team
+
+“Sử dụng Subscription” validates sign-in and obtains the plan's model catalogue
+before saving. It clears previous per-role model overrides and old API endpoint
+overrides so both inherited tiers actually use the selected subscription model.
+Unsupported temperature/output-token settings are cleared too. Vietnam data,
+paper approval, checkpoint and budget settings are preserved. Selecting it does
+not start analysis or inference. Failed sign-in, an empty catalogue or a failed
+save leaves the current provider assignment in place. Nothing changes merely
+by installing the update; the current balanced 6/6/1 assignment stays active.
