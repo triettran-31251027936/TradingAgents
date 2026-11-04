@@ -388,3 +388,15 @@ CSV. Dates are validated, end dates remain inclusive, and requests beyond the
 analysis snapshot are rejected. A stale benchmark is withheld with its warning;
 it is never used to compute an apparently current beta or return. v19 snapshots
 use a new cache identity, retaining earlier report evidence unchanged.
+
+### Five-year analysis price history
+
+v20 requests up to 1,500 daily stock/index candles and retains the five calendar
+years through the analysis date, matching the upstream indicator-history target
+instead of the previous 600-row analysis cap. Execution/settlement prices-only
+requests keep their compact 600-row request. Listing age, provider omissions and
+revisions can still limit coverage; requested start, first/last dates and actual
+completed-row counts are included in the shared evidence capsule. Long OHLCV
+tables are returned only when the original price tool requests them, rather
+than being repeated automatically in every model prompt. This does not obtain
+an unrevised historical data vintage or change the original graph/tool loop.

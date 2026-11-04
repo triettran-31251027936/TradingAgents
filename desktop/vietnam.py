@@ -31,7 +31,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 19
+VERSION = 20
 LOCK = threading.Lock()
 
 
@@ -97,8 +97,12 @@ def _request(session, url, payload=None):
     return result
 
 
-def normalize_prices(raw, asof, now=None):
+def normalize_prices(raw, asof, now=None, start=None):
     now = now or datetime.now(TZ)
+    if start is not None:
+        date.fromisoformat(start)
+        if start > asof:
+            raise ValueError("OHLCV start date is after analysis date")
     items = raw[0] if isinstance(raw, list) and raw else raw
     if not isinstance(items, dict) or not all(k in items for k in ("t", "o", "h", "l", "c", "v")):
         raise ValueError("Nguồn không trả về OHLCV đúng schema.")
@@ -108,7 +112,7 @@ def normalize_prices(raw, asof, now=None):
     rows = []
     for t, o, h, low, c, v in zip(*(items[k] for k in ("t", "o", "h", "l", "c", "v")), strict=True):
         stamp = pd.to_datetime(int(t), unit="s", utc=True).tz_convert(TZ).strftime("%Y-%m-%d")
-        if stamp > asof or (stamp == now.date().isoformat() and now.time() < day_time(15, 0)):
+        if (start is not None and stamp < start) or stamp > asof or (stamp == now.date().isoformat() and now.time() < day_time(15, 0)):
             continue  # a live partial daily candle is not a completed session
         nums = [_number(x) for x in (o, h, low, c, v)]
         if any(x is None for x in nums) or min(nums[:4]) <= 0 or nums[4] < 0:
@@ -126,6 +130,14 @@ def normalize_prices(raw, asof, now=None):
     if not rows:
         raise ValueError("Không có nến hoàn tất vào/trước ngày phân tích.")
     return rows
+
+
+def analysis_history(rows, asof, prices_only=False):
+    """Retain the upstream five-year analysis horizon; execution stays compact."""
+    if prices_only:
+        return rows
+    start = (pd.Timestamp(asof) - pd.DateOffset(years=5)).date().isoformat()
+    return [row for row in rows if start <= row["date"] <= asof]
 
 
 def _published(row, asof):
@@ -584,6 +596,7 @@ def load(
                 warnings.append(f"{name}: {type(e).__name__}; missing, not inferred")
                 return {}
 
+        history_start = None if prices_only else (pd.Timestamp(asof) - pd.DateOffset(years=5)).date().isoformat()
         prices = normalize_prices(
             fetch(
                 "prices",
@@ -592,12 +605,14 @@ def load(
                     "timeFrame": "ONE_DAY",
                     "symbols": [ticker],
                     "to": int(cutoff.timestamp()),
-                    "countBack": 600,
+                    "countBack": 600 if prices_only else 1500,
                 },
                 True,
             ),
             asof,
+            start=history_start,
         )
+        prices = analysis_history(prices, asof, prices_only)
         from desktop.technical_vietnam import check_freshness
 
         check_freshness(prices, ticker + ".VN", asof)
@@ -621,12 +636,13 @@ def load(
                     "timeFrame": "ONE_DAY",
                     "symbols": ["VNINDEX"],
                     "to": int(cutoff.timestamp()),
-                    "countBack": 600,
+                    "countBack": 1500,
                 },
             )
         )
         try:
-            benchmark = normalize_prices(benchmark_raw, asof) if benchmark_raw else []
+            benchmark = normalize_prices(benchmark_raw, asof, start=history_start) if benchmark_raw else []
+            benchmark = analysis_history(benchmark, asof)
             if benchmark:
                 check_freshness(benchmark, "VNINDEX.VN", asof)
         except (ValueError, NoMarketDataError):
@@ -886,6 +902,15 @@ def load(
             "provider": "Vietcap public market data",
             "prices": prices,
             "benchmark": benchmark,
+            "history_coverage": {
+                "requested_candles": 600 if prices_only else 1500,
+                "requested_start": history_start,
+                "completed_rows": len(prices),
+                "first_date": prices[0]["date"],
+                "last_date": prices[-1]["date"],
+                "benchmark_completed_rows": len(benchmark),
+                "scope": "Bounded provider history; listing age, missing sessions and historical revisions may limit coverage. Not an unrevised vintage or a guarantee of every market session.",
+            },
             "domestic_macro": domestic_macro,
             "insider_dealings": insider_dealings,
             "domestic_social": domestic_social,
@@ -935,6 +960,7 @@ def capsule(bundle):
                 "bank_reconciliation",
                 "valuation_reconciliation",
                 "metrics",
+                "history_coverage",
                 "missing",
                 "warnings",
                 "basis",

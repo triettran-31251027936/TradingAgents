@@ -118,14 +118,39 @@ def test_empty_price_range_routes_to_original_no_data_signal(bundle, monkeypatch
     assert "Do not" in result and "fabricate" in result
 
 
-def test_stale_primary_snapshot_stops_before_fetching_other_sources(tmp_path, monkeypatch):
+@pytest.mark.parametrize("prices_only,expected_count", [(False, 1500), (True, 600)])
+def test_stale_primary_snapshot_stops_before_fetching_other_sources(tmp_path, monkeypatch, prices_only, expected_count):
     calls = []
     def request(_session, url, payload=None):
         calls.append(url)
+        assert payload["countBack"] == expected_count
         return [{"t": [pd.Timestamp("2025-01-01", tz="UTC").timestamp()],
                  "o": [100], "h": [101], "l": [99], "c": [100], "v": [1000]}]
     monkeypatch.setattr(vietnam, "_request", request)
     with pytest.raises(NoMarketDataError, match="stale"):
-        vietnam.load("VHM.VN", "2026-10-30", tmp_path, refresh=True)
+        vietnam.load("VHM.VN", "2026-10-30", tmp_path, refresh=True, prices_only=prices_only)
     assert calls == [vietnam.CHART]
     assert not list(tmp_path.rglob("VHM_*.json"))
+
+
+def test_five_year_analysis_history_keeps_leap_year_boundary_and_execution_rows():
+    rows = [{"date": d} for d in ["2019-02-27", "2019-02-28", "2019-03-01", "2024-02-29"]]
+    assert [r["date"] for r in vietnam.analysis_history(rows, "2024-02-29")] == [
+        "2019-02-28", "2019-03-01", "2024-02-29"
+    ]
+    assert vietnam.analysis_history(rows, "2024-02-29", prices_only=True) is rows
+
+
+def test_bad_candle_outside_requested_history_does_not_poison_current_window():
+    raw = [{"t": [pd.Timestamp(d, tz="UTC").timestamp() for d in ["2021-08-23", "2026-11-03"]],
+            "o": [1329.43, 100], "h": [1326.07, 101], "l": [1298.86, 99],
+            "c": [1298.86, 100], "v": [1000, 1000]}]
+    rows = vietnam.normalize_prices(raw, "2026-11-04", start="2021-11-04")
+    assert [r["date"] for r in rows] == ["2026-11-03"]
+    with pytest.raises(ValueError, match="high/low"):
+        vietnam.normalize_prices(raw, "2026-11-04", start="2021-01-01")
+
+
+def test_invalid_normalization_window_rejected():
+    with pytest.raises(ValueError, match="start"):
+        vietnam.normalize_prices({}, "2026-11-04", start="2026-11-05")
