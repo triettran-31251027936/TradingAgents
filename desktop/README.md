@@ -433,3 +433,18 @@ snapshot, not an ALFRED revision archive or evidence of earlier intraday
 availability. Missing, modified, mismatched, symlinked or later-observed snapshots
 are withheld without downloading today's revisions. An API key still selects
 the original keyed FRED implementation.
+
+### Codex CLI quota preflight
+
+Before the first uncached model request in a desktop analysis, backtest cell or
+reflection runtime, the app reads Codex CLI quota if that provider is selected.
+It sends only `initialize`, `initialized` and `account/rateLimits/read`. It does
+not start an inference turn, sign in/out, buy credits or redeem a reset. Parallel
+roles share one probe; exact request-cache hits do not trigger a new probe.
+
+An explicit exhausted state stops before a new model call and before reserving
+a DeepSeek request. A missing/failed/unsupported response remains unknown with
+a warning, rather than being displayed as zero usage. Quota windows are a fresh
+account snapshot, not a capacity reservation or confirmation of model access.
+No role assignment, model or paid fallback changes automatically. A sanitized
+receipt is stored with the report, without raw account/authentication data.

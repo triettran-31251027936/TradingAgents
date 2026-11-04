@@ -792,7 +792,9 @@ def dispatch(action, payload):
         from desktop.model_routing import apply_role_models
         from desktop.runtime_models import Runtime
 
-        runtime = Runtime(cfg) if cfg.get("desktop_budget", {}).get("enabled") else None
+        runtime = (
+            Runtime(cfg, preflight=True) if cfg.get("desktop_budget", {}).get("enabled") else None
+        )
         apply_role_models(graph, cfg.get("desktop_role_models", {}), [handler], runtime=runtime)
         from desktop.vietnam import settlement_scope
 

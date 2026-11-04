@@ -104,7 +104,7 @@ def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper
             },
         )
     runtime = (
-        Runtime(cfg, quant=quant, book=book, emit=emit)
+        Runtime(cfg, quant=quant, book=book, emit=emit, preflight=True)
         if quant
         or cfg.get("desktop_usage", {}).get("enabled")
         or cfg.get("desktop_budget", {}).get("enabled")
@@ -161,6 +161,11 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
         result["account_metrics"] = runtime.account_metrics
         vietnam.write_json(folder / "handoffs.json", runtime.handoffs)
         result["paid_budget"] = runtime.paid_budget.summary()
+        if runtime.provider_preflight and runtime.provider_preflight.receipt:
+            result["provider_preflight"] = runtime.provider_preflight.receipt
+            vietnam.write_json(
+                folder / "provider_preflight.json", runtime.provider_preflight.receipt
+            )
         vietnam.write_json(folder / "grounding.json", runtime.grounding)
         result["usage"] = {**usage.summary(), "roles": runtime.stats}
         vietnam.write_json(folder / "usage.json", result["usage"])
@@ -463,7 +468,7 @@ def backtest_scope(cfg, emit):
             # Configure Memory before any propagate(), including its paid cap.
             self._desktop_counter = TokenUsage()
             self._desktop_runtime = (
-                Runtime(self.config)
+                Runtime(self.config, preflight=True)
                 if self.config.get("desktop_usage", {}).get("enabled")
                 or self.config.get("desktop_budget", {}).get("enabled")
                 else None
@@ -491,7 +496,10 @@ def backtest_scope(cfg, emit):
             self._desktop_counter, self._desktop_runtime = counter, runtime
             from tradingagents.dataflows.config import run_config
 
-            with vietnam.vendor_scope(quant, self.config["data_cache_dir"]), run_config(self.config):
+            with (
+                vietnam.vendor_scope(quant, self.config["data_cache_dir"]),
+                run_config(self.config),
+            ):
                 result = super().propagate(ticker, asof, asset_type, portfolio=portfolio)
             # Original reports/scoring remain; these are supporting audit files.
             from tradingagents.dataflows.symbols import safe_ticker_component
@@ -504,9 +512,7 @@ def backtest_scope(cfg, emit):
                 extra = artifacts(
                     folder, quant, runtime, counter, None, "backtest/" + ticker + "/" + asof
                 )
-                backtest_report(
-                    folder, ticker, result[0], self.run_settings(), self.config, extra
-                )
+                backtest_report(folder, ticker, result[0], self.run_settings(), self.config, extra)
             if self._desktop_pending_record:
                 super().record_decision(*self._desktop_pending_record)
             if self._desktop_pending_clear:

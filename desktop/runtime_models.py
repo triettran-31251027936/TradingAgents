@@ -77,11 +77,14 @@ def request_messages(value):
 
 
 class Runtime:
-    def __init__(self, cfg, *, quant=None, book=None, emit=None):
+    def __init__(self, cfg, *, quant=None, book=None, emit=None, preflight=False):
         self.cfg = cfg
         self.quant = quant
         self.book = book
         self.emit = emit or (lambda *a: None)
+        from desktop.codex_preflight import Preflight
+
+        self.provider_preflight = Preflight(cfg, self.emit) if preflight else None
         self.cache = Path(cfg["data_cache_dir"]) / "llm-requests"
         self.enabled = cfg.get("desktop_usage", {}).get("cache_enabled", True)
         self.lock = threading.Lock()
@@ -267,6 +270,8 @@ class Runtime:
             or self.cfg.get("quick_think_provider")
             or self.cfg.get("llm_provider")
         )
+        if self.provider_preflight:
+            self.provider_preflight.check()
         self.paid_budget.reserve(provider)
         self.count(role, "calls")
         cfg = {**config, "metadata": dict(config.get("metadata", {}))}

@@ -74,6 +74,12 @@ def _no_network(request, monkeypatch):
     monkeypatch.setattr(curl_requests.Session, "request", refuse)
     monkeypatch.setattr(curl_requests.AsyncSession, "request", refuse)
 
+    # A CLI subprocess bypasses Python's socket patches. Unit tests must not
+    # read a real user's account; transport tests use a local fake RPC server.
+    from desktop import codex_preflight
+
+    monkeypatch.setattr(codex_preflight, "read_limits", lambda: codex_preflight.unknown("unit_test_no_cli_network"))
+
 
 @pytest.fixture(autouse=True)
 def _at_a_terminal(monkeypatch):
