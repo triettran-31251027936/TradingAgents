@@ -348,3 +348,16 @@ paper approval, checkpoint and budget settings are preserved. Selecting it does
 not start analysis or inference. Failed sign-in, an empty catalogue or a failed
 save leaves the current provider assignment in place. Nothing changes merely
 by installing the update; the current balanced 6/6/1 assignment stays active.
+
+### Rounded quarterly labour counts from official releases
+
+VN snapshots v17 add `vn_release_labor_force` and `vn_release_employment` from
+the dated NSO quarterly labour release. Counts in million persons are converted
+to persons with an explicit rounded/estimated precision label, source excerpt,
+content hash, publication and modification dates. The quarter must match the
+title; cumulative averages, sector counts, another quarter and conflicting
+same-quarter values are not substituted. Future revisions stay withheld by the
+existing release filter. Original NSDP series and stale warnings remain visible
+separately; this does not claim that the SDMX source was refreshed or that a
+historical unrevised vintage was obtained. The v17 cache identity prevents reuse
+of an older aggregate snapshot that lacks these fields.

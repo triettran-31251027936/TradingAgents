@@ -107,3 +107,44 @@ def test_gdp_quarterly_growth_not_nine_month_average_or_target():
     result = m.facts(rows[0], "gdp")
     assert result["vn_release_gdp_yoy"]["value"] == pytest.approx(0.0995)
     assert result["vn_release_gdp_yoy"]["asof"] == "2026-Q3"
+
+
+def test_labor_counts_keep_quarter_scope_units_and_rounded_estimate():
+    p = post("labor")
+    p["content"]["rendered"] += (
+        " Lực lượng lao động từ 15 tuổi trở lên của cả nước quý III/2026 ước đạt 54,1 triệu người."
+        " Tính chung chín tháng, lực lượng lao động là 53,8 triệu người."
+        " Lao động có việc làm quý III/2026 đạt gần 53,0 triệu người."
+        " Lao động có việc làm chín tháng đạt 52,7 triệu người."
+    )
+    r = m.facts(m.normalize([p], "labor", "2026-10-30", NOW)[0], "labor")
+    for alias, value in [("vn_release_labor_force", 54_100_000),
+                         ("vn_release_employment", 53_000_000)]:
+        assert r[alias]["value"] == value
+        assert r[alias]["unit"] == "persons"
+        assert r[alias]["asof"] == "2026-Q3"
+        assert r[alias]["precision"] == "rounded_estimate"
+        assert "1,000,000" in r[alias]["formula"]
+        assert r[alias]["source_quote"] and r[alias]["source_content_sha256"]
+
+
+def test_labor_count_conflict_and_other_periods_are_not_guessed():
+    p = post("labor")
+    p["content"]["rendered"] += (
+        " Lực lượng lao động từ 15 tuổi trở lên của cả nước quý III/2026 ước là 54,1 triệu người."
+        " Lực lượng lao động từ 15 tuổi trở lên của cả nước quý III/2026 ước là 54,2 triệu người."
+        " Lao động có việc làm quý II/2026 đạt 52,0 triệu người."
+        " Lao động có việc làm quý III/2026 trong nông nghiệp là 13,3 triệu người."
+    )
+    r = m.facts(m.normalize([p], "labor", "2026-10-30", NOW)[0], "labor")
+    assert "vn_release_labor_force" not in r
+    assert "vn_release_employment" not in r
+
+
+def test_labor_count_future_revision_stays_withheld():
+    p = post("labor")
+    p["content"]["rendered"] = (
+        "Lao động có việc làm quý III/2026 đạt gần 53,0 triệu người."
+    )
+    p["modified_gmt"] = "2026-11-01T00:00:00"
+    assert not m.normalize([p], "labor", "2026-10-30", NOW)

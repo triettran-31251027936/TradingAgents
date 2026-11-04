@@ -105,7 +105,7 @@ def facts(record, kind):
     year = int(years[-1])
     result = {}
 
-    def capture(alias, pattern, period, unit="fraction"):
+    def capture(alias, pattern, period, unit="fraction", scale=1):
         matches = list(re.finditer(pattern, body, re.I))
         values = []
         for match in matches:
@@ -113,7 +113,7 @@ def facts(record, kind):
             value = float(match["value"].replace(",", ".")) * sign
             if unit == "fraction":
                 value /= 100
-            values.append(value)
+            values.append(value * scale)
         if not values or len(set(values)) != 1:
             return
         if unit == "fraction" and not -1 <= values[0] <= 1:
@@ -130,6 +130,12 @@ def facts(record, kind):
             "source_quote": matches[0].group(0),
             "source_content_sha256": record["content_sha256"],
         }
+        if scale != 1:
+            result[alias]["formula"] = (
+                "Official quarterly release; million persons × 1,000,000; "
+                "rounded/estimated, not a precise headcount or replacement for SDMX"
+            )
+            result[alias]["precision"] = "rounded_estimate"
 
     if kind == "cpi":
         month = re.search(
@@ -171,6 +177,20 @@ def facts(record, kind):
             )
             return result
         capture(
+            "vn_release_labor_force",
+            rf"Lực lượng lao động từ 15 tuổi trở lên của cả nước\s+{prefix}\s+ước(?:\s+tính)?\s+(?:đạt|là)\s+(?P<value>\d+(?:,\d+)?)\s+triệu người",
+            period,
+            "persons",
+            1_000_000,
+        )
+        capture(
+            "vn_release_employment",
+            rf"Lao động có việc làm\s+{prefix}\s+(?:ước(?:\s+tính)?\s+)?đạt(?:\s+gần)?\s+(?P<value>\d+(?:,\d+)?)\s+triệu người",
+            period,
+            "persons",
+            1_000_000,
+        )
+        capture(
             "vn_release_unemployment",
             rf"Trong\s+{prefix},\s+tỷ lệ thất nghiệp trong độ tuổi lao động là\s+(?P<value>\d+(?:,\d+)?)%",
             period,
@@ -210,7 +230,7 @@ def load(asof, cache_dir, *, now=None, session=None):
         "metrics": {
             name: {
                 "value": None,
-                "unit": "fraction",
+                "unit": "persons" if name in ("vn_release_labor_force", "vn_release_employment") else "fraction",
                 "asof": asof,
                 "source": API,
                 "status": "missing",
@@ -218,6 +238,8 @@ def load(asof, cache_dir, *, now=None, session=None):
             }
             for name in (
                 "vn_release_gdp_yoy",
+                "vn_release_labor_force",
+                "vn_release_employment",
                 "vn_release_cpi_mom",
                 "vn_release_cpi_yoy",
                 "vn_release_unemployment",
