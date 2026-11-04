@@ -422,3 +422,14 @@ maximum). HTTP errors, including 403/429, invalid XML/quotes and TLS errors are
 not retried. Attempt receipts accompany the result; failed refreshes retain the
 original quote/retrieval timestamps and remain marked `cached_source_error`.
 This is retail reference FX, not an SBV central rate or an executable price.
+
+### Keyless FRED historical replay
+
+A historical VN macro request can replay an exact-lookback public FRED snapshot
+that this app observed on that analysis date. Identity, checksum, CSV source
+hash/values, date bounds and source update time are checked before use. The
+original observation timestamp remains visible. This is a local observed
+snapshot, not an ALFRED revision archive or evidence of earlier intraday
+availability. Missing, modified, mismatched, symlinked or later-observed snapshots
+are withheld without downloading today's revisions. An API key still selects
+the original keyed FRED implementation.

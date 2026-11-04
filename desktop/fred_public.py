@@ -1,6 +1,7 @@
 """Official public FRED CSV for live VN analysis when no API key is present.
 
-Latest downloads are never represented as ALFRED historical vintages. The
+Locally observed same-day downloads may be replayed later, with their original
+observation timestamps. They are never represented as ALFRED vintages. The
 original keyed FRED transport remains authoritative whenever a key is supplied.
 """
 
@@ -104,6 +105,51 @@ def observations(raw, series, start, end):
     return sorted(rows, key=lambda row: row["date"])
 
 
+def observed_vintage(path, series, asof, start):
+    """Replay only a complete public download observed on the requested VN day."""
+    if not path.is_file() or path.is_symlink():
+        return None
+    try:
+        bundle = json.loads(path.read_text())
+        checksum = bundle.pop("content_sha256", None)
+        if checksum != vietnam.digest(bundle):
+            return None
+        observed = datetime.fromisoformat(bundle["observed_at"])
+        updated = datetime.fromisoformat(bundle["source_last_updated"])
+        if (
+            observed.tzinfo is None
+            or updated.tzinfo is None
+            or observed.astimezone(vietnam.TZ).date().isoformat() != asof
+            or updated > observed
+            or bundle["series_id"] != series
+            or bundle["asof"] != asof
+            or bundle["window_start"] != start
+            or bundle["version"] != 1
+        ):
+            return None
+        if observations(bundle["raw_csv"].encode(), series, start, asof) != bundle["observations"]:
+            return None
+        sources = bundle["sources"]
+        if (
+            len(sources) != 2
+            or sources[0]["url"] != META_URL + series
+            or sources[1]["url"] != CSV_URL
+            or sources[1]["params"]["id"] != series
+            or sources[1]["params"]["cosd"] != start
+            or not start <= sources[1]["params"]["coed"] <= asof
+            or any(not re.fullmatch(r"[a-f0-9]{64}", row["sha256"]) for row in sources)
+            or sources[1]["sha256"]
+            not in {
+                hashlib.sha256(bundle["raw_csv"].encode(encoding)).hexdigest()
+                for encoding in ("utf-8", "utf-8-sig")
+            }
+        ):
+            return None
+        return bundle
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        return None
+
+
 def get_macro_data(indicator, asof, look_back_days, cache_dir):
     if os.environ.get("FRED_API_KEY"):
         return fred.get_macro_data(indicator, asof, look_back_days)
@@ -116,19 +162,24 @@ def get_macro_data(indicator, asof, look_back_days, cache_dir):
     end = date.fromisoformat(asof)
     if end.isoformat() != asof:
         raise ValueError("Invalid analysis date")
-    # Deliberately do not use today's revisions to fill a historical run.
-    if asof != datetime.now(vietnam.TZ).date().isoformat():
-        return (
-            "DATA_UNAVAILABLE: FRED API key/ALFRED vintage is required for this historical "
-            "analysis. Public latest-revision CSV was not requested or backdated."
-        )
     start = (end - timedelta(days=days)).isoformat()
+    today = datetime.now(vietnam.TZ).date().isoformat()
+    historical = asof < today
+    path = Path(cache_dir) / "fred-public" / f"{series}_{asof}_{days}.json"
+    if asof != today:
+        # No new request can establish what was available on a past day.
+        bundle = observed_vintage(path, series, asof, start) if historical else None
+        if bundle is None:
+            return (
+                "DATA_UNAVAILABLE: FRED API key/ALFRED vintage or a verified locally "
+                "observed same-day snapshot is required for this historical analysis. "
+                "Public latest-revision CSV was not requested or backdated."
+            )
     public_end = min(asof, fred._fred_today())
     observed = datetime.now(UTC)
-    path = Path(cache_dir) / "fred-public" / f"{series}_{asof}_{days}.json"
     with LOCK:
-        bundle = None
-        if path.is_file() and not path.is_symlink():
+        bundle = bundle if historical else None
+        if not historical and path.is_file() and not path.is_symlink():
             cached = json.loads(path.read_text())
             checksum = cached.pop("content_sha256", None)
             age = (observed - datetime.fromisoformat(cached["observed_at"])).total_seconds()
@@ -143,9 +194,7 @@ def get_macro_data(indicator, asof, look_back_days, cache_dir):
         if bundle is None:
             meta_raw = download(META_URL + series, {})
             info = metadata(meta_raw, series)
-            csv_raw = download(
-                CSV_URL, {"id": series, "cosd": start, "coed": public_end}
-            )
+            csv_raw = download(CSV_URL, {"id": series, "cosd": start, "coed": public_end})
             rows = observations(csv_raw, series, start, public_end)
             bundle = {
                 **info,
@@ -170,11 +219,19 @@ def get_macro_data(indicator, asof, look_back_days, cache_dir):
                 ],
             }
             vietnam.write_json(path, {**bundle, "content_sha256": vietnam.digest(bundle)})
+    scope = (
+        "Official FRED public snapshot locally observed on the analysis date; "
+        "replayed without a new download. Not an ALFRED revision archive or a "
+        "guarantee of intraday availability before observed_at. Observation dates "
+        "are measured periods, not release dates. US/euro series are not Vietnamese substitutes."
+        if historical
+        else SCOPE
+    )
     text = (
         f"## FRED public: {bundle['title']} ({series})\n"
         f"- Units: {bundle['units']}\n- Adjustment: {bundle.get('units_and_adjustment', 'Not retained in older cache')}\n- Frequency: {bundle['frequency']}\n"
         f"- Window: {start} to {asof}\n- Observed: {bundle['observed_at']}\n"
-        f"- Source updated: {bundle['source_last_updated']}\n- Scope: {SCOPE}\n"
+        f"- Source updated: {bundle['source_last_updated']}\n- Scope: {scope}\n"
         f"- Source: {META_URL}{series}\n"
     )
     rows = bundle["observations"]
