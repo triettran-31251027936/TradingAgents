@@ -147,3 +147,14 @@ the blocking roles and explains that no proposal is created until their argument
 are complete and reassessed. Preserve the model's original rating/text as evidence;
 do not relabel a proposed intent as an executable order. Role effort controls now
 retain both Codex and DeepSeek settings, and reports record requested effort.
+
+
+## Saved decision and role-reader repair
+Mode: Extension. Preserve the navy/mint palette, Avenir Next, original 13 roles,
+page labels, report content and consent flow. Variance 3, motion 2, density 7,
+asset dependence 3, brand fidelity 10. Role clicks reveal the document within
+its own scrolling container; a labelled role picker keeps team navigation in
+the reading pane. A text-only decision summary separates investment rating from
+virtual execution, uses saved typed metadata and never implies an order was
+sent. Original report bytes remain unchanged. FRED settings explain keyless VN
+analysis and the historical observed-snapshot boundary; no new external assets.
