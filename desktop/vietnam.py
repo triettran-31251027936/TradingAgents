@@ -96,7 +96,7 @@ def _request(session, url, payload=None):
     return result
 
 
-def normalize_prices(raw, asof, now=None, start=None):
+def normalize_prices(raw, asof, now=None, start=None, *, reconcile=None):
     now = now or datetime.now(TZ)
     if start is not None:
         date.fromisoformat(start)
@@ -116,13 +116,14 @@ def normalize_prices(raw, asof, now=None, start=None):
         nums = [_number(x) for x in (o, h, low, c, v)]
         if any(x is None for x in nums) or min(nums[:4]) <= 0 or nums[4] < 0:
             raise ValueError("OHLCV chứa giá/khối lượng không hợp lệ; không nội suy.")
-        if not (nums[2] <= min(nums[0], nums[3]) <= max(nums[0], nums[3]) <= nums[1]):
-            raise ValueError("OHLCV vi phạm quan hệ high/low.")
-        rows.append(
-            dict(
-                zip(("date", "open", "high", "low", "close", "volume"), [stamp, *nums], strict=True)
-            )
+        row = dict(
+            zip(("date", "open", "high", "low", "close", "volume"), [stamp, *nums], strict=True)
         )
+        if not (nums[2] <= min(nums[0], nums[3]) <= max(nums[0], nums[3]) <= nums[1]):
+            row = reconcile(row) if reconcile else None
+            if row is None:
+                raise ValueError(f"OHLCV vi phạm quan hệ high/low tại {stamp}; chưa có nến đối chiếu.")
+        rows.append(row)
     rows.sort(key=lambda r: r["date"])
     if len({r["date"] for r in rows}) != len(rows):
         raise ValueError("Nguồn trả về hai nến cùng ngày; cần đối soát.")
@@ -639,6 +640,20 @@ def load(
                 warnings.append(f"{name}: {type(e).__name__}; missing, not inferred")
                 return {}
 
+        from desktop.technical_vietnam import anchor_history, check_freshness, reconcile_candle
+
+        price_reconciliations = []
+
+        def reconcile(row):
+            if len(price_reconciliations) >= 8:
+                return None
+            result = reconcile_candle(ticker, row, fetch)
+            if result:
+                corrected, receipt = result
+                price_reconciliations.append(receipt)
+                return corrected
+            return None
+
         history_start = None if prices_only else (pd.Timestamp(asof) - pd.DateOffset(years=5)).date().isoformat()
         prices = normalize_prices(
             fetch(
@@ -654,9 +669,9 @@ def load(
             ),
             asof,
             start=history_start,
+            reconcile=reconcile,
         )
         prices = analysis_history(prices, asof, prices_only)
-        from desktop.technical_vietnam import anchor_history, check_freshness
 
         check_freshness(prices, ticker + ".VN", asof)
         price_basis = {}
@@ -667,6 +682,17 @@ def load(
                     "Historical price anchor unavailable or inconsistent; the Vietcap scale "
                     "is retained and absolute levels may differ from actual traded prices."
                 )
+        if price_reconciliations:
+            from desktop.technical_vietnam import _SOURCE_BASIS
+
+            warning = (
+                f"{len(price_reconciliations)} inconsistent Vietcap OHLC candles reconciled "
+                "against same-session DNSE chart data; Vietcap volume retained."
+            )
+            warnings.append(warning)
+            price_basis["description"] = (
+                price_basis.get("description", _SOURCE_BASIS) + " " + warning
+            )
         news_start = (date.fromisoformat(asof) - timedelta(days=7)).isoformat()
         news, news_coverage = (
             ([], {})
@@ -1038,6 +1064,7 @@ def load(
             "history_coverage": {
                 "requested_candles": price_count,
                 "requested_start": history_start,
+                "ohlc_reconciliations": price_reconciliations,
                 "completed_rows": len(prices),
                 "first_date": prices[0]["date"],
                 "last_date": prices[-1]["date"],

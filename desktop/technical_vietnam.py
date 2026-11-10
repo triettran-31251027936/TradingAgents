@@ -1,7 +1,7 @@
 """Original stockstats indicators on the canonical VN completed-candle series."""
 
 import math
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from urllib.parse import urlencode
 
 import pandas as pd
@@ -19,6 +19,43 @@ INDICATORS = (
 _PRICE_HISTORY = "https://cafef.vn/du-lieu/Ajax/PageNew/DataHistory/PriceHistory.ashx"
 _SOURCE_BASIS = "Vietcap prices on the provider's current adjustment basis. Historical closes may differ from actual session prices."
 OHLC = ("open", "high", "low", "close")
+
+
+def reconcile_candle(ticker, primary, fetch):
+    """Use a dated DNSE observation only when both price-scale anchors agree."""
+    from desktop.vietnam import TZ, normalize_prices
+
+    day = date.fromisoformat(primary["date"])
+    start = datetime.combine(day, time.min, TZ)
+    end = datetime.combine(day, time.max, TZ)
+    query = urlencode({
+        "symbol": ticker, "resolution": "1D",
+        "from": int(start.timestamp()), "to": int(end.timestamp()),
+    })
+    url = f"https://api.dnse.com.vn/chart-api/v2/ohlcs/stock?{query}"
+    raw = fetch(f"DNSE OHLC reconciliation {day}", url)
+    try:
+        secondary, = normalize_prices(raw, day.isoformat(), start=day.isoformat())
+        prices = {key: secondary[key] * 1000 for key in OHLC}
+        # The chart projects prices in increments of 0.01 thousand VND.
+        if any(
+            abs(prices[key] - primary[key]) > min(10.001, 0.001 * primary[key])
+            for key in ("open", "close")
+        ):
+            return None
+    except (ValueError, TypeError, OverflowError):
+        return None
+    repaired = {**primary, **prices}
+    return repaired, {
+        "date": primary["date"],
+        "source": "DNSE public chart",
+        "url": url,
+        "method": "DNSE OHLC converted from thousand VND; opening and close agree within one displayed increment and 0.1%. Vietcap volume is retained.",
+        "vietcap_ohlc": {key: primary[key] for key in OHLC},
+        "dnse_ohlc_vnd": prices,
+        "vietcap_volume": primary["volume"],
+        "dnse_volume": secondary["volume"],
+    }
 
 
 def anchor_history(rows, ticker, fetch):

@@ -151,6 +151,44 @@ def test_bad_candle_outside_requested_history_does_not_poison_current_window():
         vietnam.normalize_prices(raw, "2026-11-04", start="2021-01-01")
 
 
+@pytest.mark.parametrize("matching_scale", [True, False])
+def test_invalid_primary_candle_requires_dated_secondary_ohlc(tmp_path, monkeypatch, matching_scale):
+    from urllib.parse import parse_qs, urlsplit
+
+    target = "2025-05-15"
+    stamp = int(pd.Timestamp("2025-05-15T09:00:00+07:00").timestamp())
+    raw = [{"t": [stamp], "o": [21884.34], "h": [21728.58], "l": [21728.58],
+            "c": [21728.58], "v": [3063802]}]
+    calls = []
+
+    def request(_session, url, _payload):
+        calls.append(url)
+        if url == vietnam.CHART:
+            return raw
+        if url.startswith("https://api.dnse.com.vn/"):
+            query = parse_qs(urlsplit(url).query)
+            assert query["symbol"] == ["PVS"] and int(query["from"][0]) < stamp < int(query["to"][0])
+            return {"t": [stamp], "o": [21.88], "h": [21.88], "l": [21.34],
+                    "c": [21.72 if matching_scale else 21.61], "v": [3062200]}
+        return {"data": [{"symbol": "PVS", "board": "HNX"}]}
+
+    monkeypatch.setattr(vietnam, "_request", request)
+    if not matching_scale:
+        with pytest.raises(ValueError, match=target):
+            vietnam.load("PVS", target, tmp_path, prices_only=True)
+        return
+    snapshot = vietnam.load("PVS", target, tmp_path, prices_only=True)
+    assert snapshot["prices"][0] == {
+        "date": target, "open": 21880, "high": 21880, "low": 21340,
+        "close": 21720, "volume": 3063802,
+    }
+    receipt, = snapshot["history_coverage"]["ohlc_reconciliations"]
+    assert receipt["date"] == target and receipt["dnse_volume"] == 3062200
+    assert receipt["vietcap_ohlc"]["high"] == 21728.58
+    assert any(s["url"] == receipt["url"] for s in snapshot["sources"])
+    assert "DNSE" in vn.prices(snapshot, target, target)
+
+
 def test_invalid_normalization_window_rejected():
     with pytest.raises(ValueError, match="start"):
         vietnam.normalize_prices({}, "2026-11-04", start="2026-11-05")
