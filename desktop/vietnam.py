@@ -30,6 +30,7 @@ TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
 VERSION = 32
+VERIFIED_SNAPSHOT_PREFIX = "Verified canonical VN snapshot (same source as other VN tools):\n"
 LOCK = threading.Lock()
 
 
@@ -1071,43 +1072,66 @@ def load(
         return bundle
 
 
-def capsule(bundle):
+def _metric_references(section, canonical):
+    """Replace identical nested metric records with references to the top-level map."""
+    metrics = section.get("metrics", {})
+    references = [
+        name
+        for name, metric in metrics.items()
+        if name in canonical and digest(metric) == digest(canonical[name])
+    ]
+    if not references:
+        return section
+    return {
+        **section,
+        "metrics": {name: metric for name, metric in metrics.items() if name not in references},
+        "metric_keys_in_canonical_metrics": references,
+    }
+
+
+def capsule(bundle, *, compact=False):
     from desktop.macro_vietnam import summary as macro_summary
 
-    result = json.dumps(
-        {
-            k: bundle[k]
-            for k in [
-                "ticker",
-                "company_name",
-                "company_profile",
-                "exchange",
-                "analysis_date",
-                "currency",
-                "provider",
-                "news_coverage",
-                "bank_reconciliation",
-                "valuation_reconciliation",
-                "metrics",
-                "history_coverage",
-                "price_basis",
-                "missing",
-                "warnings",
-                "basis",
-                "fingerprint",
-            ]
-            if k in bundle
-        },
-        ensure_ascii=False,
-        allow_nan=False,
-    )
-    decoded = json.loads(result)
+    decoded = {
+        k: bundle[k]
+        for k in [
+            "ticker",
+            "company_name",
+            "company_profile",
+            "exchange",
+            "analysis_date",
+            "currency",
+            "provider",
+            "news_coverage",
+            "bank_reconciliation",
+            "valuation_reconciliation",
+            "metrics",
+            "history_coverage",
+            "price_basis",
+            "missing",
+            "warnings",
+            "basis",
+            "fingerprint",
+        ]
+        if k in bundle
+    }
+    canonical = bundle.get("metrics", {})
     if bundle.get("domestic_macro"):
-        decoded["domestic_macro"] = macro_summary(bundle["domestic_macro"])
+        macro = macro_summary(bundle["domestic_macro"])
+        if compact and "official_releases" in macro:
+            macro["official_releases"] = _metric_references(macro["official_releases"], canonical)
+        decoded["domestic_macro"] = macro
     if bundle.get("insider_dealings"):
         from desktop.insider_vietnam import summary as insider_summary
 
-        decoded["insider_dealings"] = insider_summary(bundle["insider_dealings"])
+        insider = insider_summary(bundle["insider_dealings"])
+        if compact:
+            insider = _metric_references(insider, canonical)
+            if "registration_snapshot" in insider:
+                insider["registration_snapshot"] = _metric_references(
+                    insider["registration_snapshot"], canonical
+                )
+        decoded["insider_dealings"] = insider
     if bundle.get("domestic_social"):
         from desktop.social_vietnam import summary as social_summary
 
@@ -1248,9 +1272,7 @@ def vendor_scope(bundle, cache_dir=None):
                 return (
                     "Requested date differs from canonical snapshot; use the current analysis date."
                 )
-            return "Verified canonical VN snapshot (same source as other VN tools):\n" + capsule(
-                bundle
-            )
+            return VERIFIED_SNAPSHOT_PREFIX + capsule(bundle)
 
         tools.build_verified_market_snapshot = verified
         yield

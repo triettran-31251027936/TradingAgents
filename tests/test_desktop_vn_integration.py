@@ -338,6 +338,48 @@ def test_cross_ticker_reflection_does_not_receive_current_ticker_quant(tmp_path)
     assert "CANONICAL QUANTITATIVE" not in str(prompt)
 
 
+def test_prompt_reuses_identical_vietnam_evidence_without_losing_tool_data(tmp_path):
+    from langchain_core.messages import ToolMessage
+
+    q = bundle()
+    q["domestic_macro"] = {
+        "official_releases": {
+            "metrics": {
+                "close": q["metrics"]["close"],
+                "adv20": {"value": 1, "source": "Distinct source"},
+                "new_observation": {"value": 2},
+            }
+        }
+    }
+    original = vietnam.capsule(q)
+    compact = json.loads(vietnam.capsule(q, compact=True))
+    release = compact["domestic_macro"]["official_releases"]
+    assert release.pop("metric_keys_in_canonical_metrics") == ["close"]
+    release["metrics"]["close"] = compact["metrics"]["close"]
+    assert compact == json.loads(original)
+
+    runtime = Runtime({"data_cache_dir": str(tmp_path)}, quant=q)
+    result = ToolMessage(name="get_fundamentals", tool_call_id="same", content=original)
+    different = ToolMessage(name="get_fundamentals", tool_call_id="different", content="Other data")
+    error = ToolMessage(
+        name="get_fundamentals", tool_call_id="error", content=original, status="error"
+    )
+    market = ToolMessage(
+        name="get_verified_market_snapshot",
+        tool_call_id="market",
+        content=vietnam.VERIFIED_SNAPSHOT_PREFIX + original,
+    )
+    prompt = runtime.prompt([result, market, different, error], "Fundamentals Analyst")
+    assert result.content == original
+    assert "Successful get_fundamentals result" in prompt[1].content
+    assert prompt[1].tool_call_id == result.tool_call_id
+    assert "Successful get_verified_market_snapshot result" in prompt[2].content
+    assert prompt[2].tool_call_id == market.tool_call_id
+    assert prompt[3:] == [different, error]
+    runtime._capture("Fundamentals Analyst", AIMessage(content="Report"), value=prompt)
+    assert runtime.handoffs["Fundamentals Analyst"]["metric_count"] == len(q["metrics"])
+
+
 def test_request_cache_ignores_graph_ids_but_preserves_evidence(tmp_path):
     from langchain_core.messages import HumanMessage
 
