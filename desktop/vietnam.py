@@ -29,7 +29,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 26
+VERSION = 27
 LOCK = threading.Lock()
 
 
@@ -827,6 +827,25 @@ def load(
                     "records": [],
                     "warnings": [type(exc).__name__],
                 }
+            from desktop.share_registry import load_transfers
+
+            try:
+                transfers = load_transfers(ticker, asof, cache_dir)
+            except (OSError, ValueError) as exc:
+                transfers = {"status": "unavailable", "records": [], "warnings": [type(exc).__name__]}
+            insider_dealings["vsdc_transfers"] = transfers
+            warnings.extend(transfers["warnings"])
+            sources.extend(
+                {
+                    "name": "Công bố chuyển quyền sở hữu · VSDC",
+                    "url": row["url"],
+                    "published": row["published"],
+                    "observed_at": transfers["observed_at"],
+                    "sha256": row["sha256"],
+                    "status": transfers["status"],
+                }
+                for row in transfers["records"]
+            )
             metrics.update(insider_vietnam.metrics(insider_dealings))
             missing = missing_metrics(metrics)
             warnings.extend(insider_dealings.get("warnings", []))

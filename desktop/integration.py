@@ -297,6 +297,13 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                     "; ".join(row.get("quality_notes", [])),
                 )
                 text += "| " + " | ".join(cell(v) for v in values) + " |\n"
+            transfers = insider.get("vsdc_transfers") or {}
+            if transfers:
+                text += "\n### Công bố chuyển quyền sở hữu của VSDC\n\n"
+                text += "Công bố chuyển quyền được trình bày riêng với giao dịch mua bán và đăng ký giao dịch.\n\n"
+                text += f"Trạng thái nguồn: {cell(transfers.get('status'))}.\n\n"
+                for row in transfers.get("records", []):
+                    text += f"- [{cell(row['title'])}]({row['url']}) · {row['shares']:,} cổ phiếu · hiệu lực {cell(row['effective_date'])} · công bố {cell(row['published'])}.\n"
         social = q.get("domestic_social") or {}
         if social:
             text += "\n### Mẫu thảo luận cộng đồng Việt Nam — F247 RSS\n\n"

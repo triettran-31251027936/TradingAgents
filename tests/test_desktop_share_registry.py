@@ -176,3 +176,47 @@ def test_ipo_tranche_is_not_added_again_to_whole_company_registration():
 def test_arbitrary_non_additive_or_misdated_histories_still_withheld(wrong):
     with pytest.raises(ValueError):
         m.parse(ipo_page().replace(*wrong), "AAA", "2026-10-30")
+
+
+def test_transfer_cutoff_uses_publication_and_effective_dates(tmp_path):
+    def notice_row(number, day):
+        return (
+            f'<li><h3><a href="/ad/{number}">AAA: Chuyển quyền sở hữu</a></h3>'
+            f'<div class="time-news">Cập nhật ngày {day} - 09:00:00</div></li>'
+        )
+
+    class TransferSession(Session):
+        def get(self, url, **kw):
+            self.calls.append(url)
+            if url.endswith("/ad/20"):
+                return Response(
+                    url,
+                    '<h3 class="title-category">AAA: Chuyển quyền sở hữu 100 cổ phiếu</h3>'
+                    '<div class="time-newstcph">Cập nhật ngày 28/10/2026 - 09:00:00</div>'
+                    '<div class="content-category">Thông báo thực hiện chuyển quyền sở hữu '
+                    '100 cổ phiếu AAA. Ngày hiệu lực chuyển quyền: 27/10/2026.</div>',
+                )
+            return Response(
+                url, page() + '<div id="divlistArticlesTCPH_TCDK"><ul class="list-news">'
+                + notice_row(21, "30/10/2026") + notice_row(20, "28/10/2026")
+                + '</ul><span id="next">Next</span></div>',
+            )
+
+        def post(self, url, **kw):
+            if url == m.SEARCH:
+                return super().post(url, **kw)
+            self.calls.append(url)
+            assert kw["json"] == {"SearchKey": "12", "CurrentPage": 2, "RecordOnPage": 10}
+            return Response(url, '<ul class="list-news">' + notice_row(19, "27/10/2025") + '</ul>')
+
+    session = TransferSession()
+    result = m.load_transfers("AAA", "2026-10-29", tmp_path, now=NOW, session=session)
+    assert result["status"] == "available"
+    row, = result["records"]
+    assert row["shares"] == 100 and row["effective_date"] == "2026-10-27"
+    assert row["published"].startswith("2026-10-28T09:00:00")
+    assert row["url"].endswith("/20") and not any(url.endswith("/21") for url in session.calls)
+    assert "Ownership transfers are separate" in result["scope"]
+    offline = Session(failed=True)
+    assert m.load_transfers("AAA", "2026-10-29", tmp_path, now=NOW, session=offline) == result
+    assert not offline.calls

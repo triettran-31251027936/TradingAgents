@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -129,6 +129,52 @@ def parse(raw, ticker, asof):
     }
 
 
+def response_text(response):
+    response.raise_for_status()
+    host = urlparse(response.url).hostname
+    if host != "vsdc.vn" or len(response.content) > 2_000_000:
+        raise ValueError("Unexpected registry host or document size")
+    return response.text
+
+
+def fetch_registry(ticker, session):
+    session.headers.update({"User-Agent": "TradingAgents-Research/0.8"})
+    home = BeautifulSoup(
+        response_text(session.get(ROOT + "/vi/", timeout=(8, 20))), "html.parser"
+    )
+    csrf = home.select_one('meta[name="__VPToken"]')
+    response = session.post(
+        SEARCH,
+        json={"text": ticker, "type": "5"},
+        headers={"__VPToken": csrf["content"]} if csrf else {},
+        timeout=(8, 20),
+    )
+    data = json.loads(response_text(response))
+    if data.get("success") != 0 or not isinstance(data.get("data"), list):
+        raise ValueError("Invalid registry search response")
+    matches = [
+        r
+        for r in data["data"]
+        if re.match(re.escape(ticker) + r":\s*Cổ phiếu\b", str(r.get("content", "")))
+        and "hủy đăng ký" not in str(r.get("content", "")).casefold()
+    ]
+    if len(matches) != 1:
+        raise ValueError("No unique exact stock registry match")
+    href = matches[0].get("href", "")
+    if not isinstance(href, str) or not re.fullmatch(r"/vi/s-detail/[1-9]\d{0,8}", href):
+        raise ValueError("Invalid stock registry detail link")
+    url = ROOT + href
+    raw = response_text(session.get(url, timeout=(8, 20)))
+    return url, raw
+
+
+def sanitized_page(raw):
+    soup = BeautifulSoup(raw, "html.parser")
+    for tag in soup.select('meta[name="__VPToken"],script,style'):
+        tag.decompose()
+    return soup
+
+
 def load(ticker, asof, cache_dir, *, now=None, session=None):
     ticker = symbol(ticker)
     now = (now or datetime.now(TZ)).astimezone(TZ)
@@ -149,47 +195,9 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
     if cached and (now - datetime.fromisoformat(cached["observed_at"])).total_seconds() < 21600:
         return cached
     session = session or requests.Session()
-    session.headers.update({"User-Agent": "TradingAgents-Research/0.8"})
-
-    def response_text(response):
-        response.raise_for_status()
-        host = urlparse(response.url).hostname
-        if host != "vsdc.vn" or len(response.content) > 2_000_000:
-            raise ValueError("Unexpected registry host or document size")
-        return response.text
-
     try:
-        home = BeautifulSoup(
-            response_text(session.get(ROOT + "/vi/", timeout=(8, 20))), "html.parser"
-        )
-        csrf = home.select_one('meta[name="__VPToken"]')
-        response = session.post(
-            SEARCH,
-            json={"text": ticker, "type": "5"},
-            headers={"__VPToken": csrf["content"]} if csrf else {},
-            timeout=(8, 20),
-        )
-        data = json.loads(response_text(response))
-        if data.get("success") != 0 or not isinstance(data.get("data"), list):
-            raise ValueError("Invalid registry search response")
-        matches = [
-            r
-            for r in data["data"]
-            if re.match(re.escape(ticker) + r":\s*Cổ phiếu\b", str(r.get("content", "")))
-            and "hủy đăng ký" not in str(r.get("content", "")).casefold()
-        ]
-        if len(matches) != 1:
-            raise ValueError("No unique exact stock registry match")
-        href = matches[0].get("href", "")
-        if not isinstance(href, str) or not re.fullmatch(r"/vi/s-detail/[1-9]\d{0,8}", href):
-            raise ValueError("Invalid stock registry detail link")
-        url = ROOT + href
-        raw = response_text(session.get(url, timeout=(8, 20)))
-        # Session/CSRF material is not part of the archived financial evidence.
-        soup = BeautifulSoup(raw, "html.parser")
-        for tag in soup.select('meta[name="__VPToken"],script,style'):
-            tag.decompose()
-        raw = str(soup)
+        url, raw = fetch_registry(ticker, session)
+        raw = str(sanitized_page(raw))
         record = {
             **parse(raw, ticker, asof),
             "status": "available",
@@ -208,3 +216,129 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
         if cached:
             return {**cached, "status": "cached_source_error", "reason": type(exc).__name__}
         return {**empty, "reason": type(exc).__name__}
+
+
+TRANSFER_SCOPE = (
+    "Official VSDC issuer-notice sample. Ownership transfers are separate from "
+    "exchange trades, insider buys/sells and CafeF volume totals. A listed update "
+    "time is the source's dated public notice, not a guaranteed revision archive."
+)
+TRANSFER_PAGE_LIMIT = 8
+TRANSFER_NOTICE_LIMIT = 24
+
+
+def _notice_time(node):
+    text = node.get_text(" ", strip=True) if node else ""
+    match = re.fullmatch(r"Cập nhật ngày (\d{2}/\d{2}/\d{4}) - (\d{2}:\d{2}:\d{2})", text)
+    if not match:
+        raise ValueError("Invalid VSDC notice date")
+    return datetime.strptime(" ".join(match.groups()), "%d/%m/%Y %H:%M:%S").replace(tzinfo=TZ)
+
+
+def _transfer_title(ticker, title):
+    return re.fullmatch(
+        re.escape(ticker) + r":\s*(?:Thực hiện )?Chuyển quyền sở hữu(?: ([\d.]+) cổ phiếu)?",
+        title, re.I,
+    )
+
+
+def parse_transfer(raw, ticker, published, start, cutoff):
+    soup = sanitized_page(raw)
+    title = soup.select_one("h3.title-category")
+    heading = _transfer_title(ticker, title.get_text(" ", strip=True)) if title else None
+    stamp = _notice_time(soup.select_one(".time-newstcph"))
+    body = soup.select_one(".content-category")
+    if not heading or stamp != published or not start <= stamp <= cutoff or body is None:
+        raise ValueError("VSDC notice identity or date differs from issuer list")
+    text = " ".join(body.get_text(" ", strip=True).split())
+    amount = re.findall(r"thông báo thực hiện chuyển quyền sở hữu ([\d.]+) cổ phiếu", text, re.I)
+    date_text = re.findall(r"Ngày hiệu lực chuyển quyền:\s*(\d{2}/\d{2}/\d{4})", text, re.I)
+    if len(amount) != 1 or len(date_text) != 1:
+        raise ValueError("Missing or ambiguous VSDC transfer amount or date")
+    shares = integer(amount[0])
+    effective = datetime.strptime(date_text[0], "%d/%m/%Y").date()
+    if shares <= 0 or (heading[1] and integer(heading[1]) != shares) or effective > cutoff.date():
+        raise ValueError("VSDC transfer title, amount or effective date invalid")
+    return {
+        "published": stamp.isoformat(), "effective_date": effective.isoformat(),
+        "shares": shares, "title": title.get_text(" ", strip=True),
+        "sha256": hashlib.sha256(str(soup).encode()).hexdigest(),
+    }
+
+
+def load_transfers(ticker, asof, cache_dir, *, now=None, session=None):
+    ticker = symbol(ticker)
+    now = (now or datetime.now(TZ)).astimezone(TZ)
+    target = datetime.strptime(asof, "%Y-%m-%d").date()
+    cutoff = min(now, datetime.combine(target, time.max, TZ))
+    start = datetime.combine(target - timedelta(days=365), time.min, TZ)
+    path = Path(cache_dir) / "vn-registry" / ticker / (asof + ".transfers.json")
+    result = {"scope": TRANSFER_SCOPE, "records": [], "warnings": [], "status": "unavailable",
+              "published_window_start": start.date().isoformat()}
+    if target > now.date():
+        return {**result, "status": "withheld"}
+    if path.is_file() and not path.is_symlink():
+        cached = json.loads(path.read_text())
+        if 0 <= (now - datetime.fromisoformat(cached["observed_at"])).total_seconds() < 21600:
+            return cached
+    session = session or requests.Session()
+    try:
+        issuer_url, raw = fetch_registry(ticker, session)
+        page = BeautifulSoup(raw, "html.parser")
+        # Validate the underlying security, even when its current registration
+        # includes events after the requested date.
+        parse(str(sanitized_page(raw)), ticker, now.date().isoformat())
+        token = page.select_one('meta[name="__VPToken"]')
+        headers = {"__VPToken": token["content"]} if token else {}
+        listing = page.select_one("#divlistArticlesTCPH_TCDK")
+        if listing is None:
+            raise ValueError("Missing VSDC issuer notice listing")
+        result["source_url"] = issuer_url
+        candidates = {}
+        previous_stamp = None
+        covered = False
+        for page_index in range(1, TRANSFER_PAGE_LIMIT + 1):
+            links = listing.select("ul.list-news > li")
+            if not links and page_index > 1:
+                raise ValueError("Unexpected empty VSDC issuer page")
+            for item in links:
+                stamp = _notice_time(item.select_one(".time-news"))
+                if previous_stamp is not None and stamp > previous_stamp:
+                    raise ValueError("Unordered VSDC issuer notices")
+                previous_stamp = stamp
+                if not start <= stamp <= cutoff:
+                    continue
+                link = item.select_one("h3 a[href]")
+                if link and _transfer_title(ticker, link.get_text(" ", strip=True)):
+                    href = link["href"]
+                    if not re.fullmatch(r"/(?:vi/)?ad/[1-9]\d{0,8}", href):
+                        raise ValueError("Invalid VSDC transfer notice link")
+                    candidates[ROOT + href] = stamp
+            covered = (previous_stamp is not None and previous_stamp < start) or not listing.select_one("#next")
+            if covered or page_index == TRANSFER_PAGE_LIMIT:
+                break
+            fragment = response_text(session.post(
+                ROOT + "/isuisser-tcdk/search",
+                json={"SearchKey": issuer_url.rsplit("/", 1)[-1],
+                      "CurrentPage": page_index + 1, "RecordOnPage": 10},
+                headers=headers, timeout=(8, 20),
+            ))
+            listing = BeautifulSoup(fragment, "html.parser")
+        if not covered or len(candidates) > TRANSFER_NOTICE_LIMIT:
+            result["warnings"].append("VSDC issuer listing or notice limit reached")
+        for url, stamp in list(candidates.items())[:TRANSFER_NOTICE_LIMIT]:
+            try:
+                raw = response_text(session.get(url, timeout=(8, 20)))
+                record = parse_transfer(raw, ticker, stamp, start, cutoff)
+                archive = path.parent / ("transfer_" + record["sha256"] + ".json")
+                if not archive.exists():
+                    write_json(archive, {"url": url, "html": str(sanitized_page(raw))})
+                result["records"].append({**record, "url": url})
+            except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+                result["warnings"].append("VSDC notice withheld: " + type(exc).__name__)
+        result["status"] = "partial" if result["warnings"] else "available"
+        result["observed_at"] = now.isoformat()
+        write_json(path, result)
+    except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+        result["warnings"].append("VSDC issuer transfers: " + type(exc).__name__)
+    return result
