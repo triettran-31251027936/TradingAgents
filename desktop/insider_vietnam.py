@@ -693,7 +693,8 @@ def metrics(bundle):
         and r["plan_window_valid"]
     ]
     corroborated = bundle["status"] == "corroborated_results"
-    result_totals_reliable = (usable or corroborated) and not any(
+    issuer_results = bundle["status"] == "issuer_results"
+    result_totals_reliable = (usable or corroborated or issuer_results) and not any(
         (
             r["stage"] == "result_volume_missing"
             and r["reported_result_end"]
@@ -736,6 +737,8 @@ def metrics(bundle):
         scope = (
             "; dated corroborated result subset from the later-observed feed; includes ownership transfers, separate from exchange trades"
             if corroborated
+            else "; validated dated PTSC issuer result subset only; sale corrections applied by publication date; no complete shareholder or trade coverage"
+            if issuer_results
             else "; within retrieved source records only; announcement date is not result-publication date; undated results excluded without assigning them to another period; not a complete market census"
         )
         output[key] = {
@@ -788,6 +791,7 @@ def tool(bundle, ticker, asof):
         "actor_scope",
         "mechanism",
         "source_announcement_date",
+        "source_url",
         "plan_begin",
         "plan_end",
         "plan_window_valid",
@@ -799,6 +803,9 @@ def tool(bundle, ticker, asof):
         "reported_result_end",
         "result_published",
         "result_url",
+        "original_reported_sell",
+        "original_result_published",
+        "original_result_url",
         "holding_before",
         "holding_after",
         "note",

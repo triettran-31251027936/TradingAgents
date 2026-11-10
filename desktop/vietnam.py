@@ -1004,6 +1004,24 @@ def load(
                 {"name": "Công bố kết quả giao dịch · CafeF dẫn HOSE", **row}
                 for row in insider_dealings.get("result_evidence", [])
             )
+            if ticker == "PVS" and insider_dealings["status"] in ("withheld", "unavailable"):
+                from desktop import ptsc_dealings
+
+                try:
+                    issuer = ptsc_dealings.load(asof)
+                except (OSError, ValueError, requests.RequestException) as exc:
+                    warnings.append("PTSC shareholder disclosures: " + type(exc).__name__)
+                else:
+                    if issuer["records"]:
+                        if "registration_snapshot" in insider_dealings:
+                            issuer["registration_snapshot"] = insider_dealings["registration_snapshot"]
+                        sources.extend(
+                            {"name": "Công bố giao dịch nội bộ · PTSC", "status": "available", **row}
+                            for row in issuer["issuer_sources"]
+                        )
+                        insider_dealings = {**issuer, "cafef_status": insider_dealings["status"]}
+                    else:
+                        warnings.extend(issuer["warnings"])
             insider_dealings["vsdc_transfers"] = transfers
             warnings.extend(transfers["warnings"])
             sources.extend(
@@ -1022,8 +1040,9 @@ def load(
             warnings.extend(insider_dealings.get("warnings", []))
             sources.append(
                 {
-                    "name": "CafeF shareholder dealings",
-                    "url": insider_vietnam.URL,
+                    "name": "PTSC insider disclosures index"
+                    if "cafef_status" in insider_dealings else "CafeF shareholder dealings",
+                    "url": insider_dealings["source_url"],
                     "retrieved_at": insider_dealings.get("retrieved_at", "unavailable"),
                     "sha256": insider_dealings.get("source_sha256"),
                     "status": insider_dealings["status"],
