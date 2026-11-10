@@ -10,13 +10,14 @@ import json
 import math
 import uuid
 from contextlib import nullcontext
-from datetime import datetime, time as daytime, timedelta
+from datetime import date, datetime, time as daytime, timedelta
 from zoneinfo import ZoneInfo
 
 import backtrader as bt
 import pandas as pd
 
 from desktop.market_board import phase
+from desktop.market_calendar import trading_day
 from desktop.paper import Store, VNCommission, _utc, validate_order
 from desktop.vietnam import digest
 
@@ -43,7 +44,11 @@ def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH):
     results = {}
     eligible = {}
     for ticker, rows in frames.items():
-        rows = [r for r in rows if r["time"] + 60 <= now.timestamp() and r.get("complete", True)]
+        rows = [
+            r for r in rows
+            if r["time"] + 60 <= now.timestamp() and r.get("complete", True)
+            and trading_day(datetime.fromtimestamp(r["time"], TZ).date())
+        ]
         if not rows:
             continue
         frame = pd.DataFrame(rows)
@@ -294,13 +299,28 @@ class PracticeStore(Store):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             before = db.execute("SELECT * FROM account WHERE id=1").fetchone()
+            previous_state = json.loads(before["state"])
+            prior_days = set(previous_state.get("sessions", []))
+            valid_prior_days = {day for day in prior_days if trading_day(date.fromisoformat(day))}
+            today = now.date().isoformat()
+            reported_days = {
+                day
+                for market in boards.values() if market.get("status") != "unavailable"
+                for day in market.get("completed_sessions", [])
+                if trading_day(date.fromisoformat(day))
+                and (day < today or day == today and now.time() >= daytime(15))
+            }
+            # New observed sessions may settle a position even without a new quote.
+            changed = valid_prior_days != prior_days or bool(reported_days - prior_days)
             # Revisions block matching; never overwrite bars previously consumed.
-            changed = False
             for ticker, market in boards.items():
                 if market.get("status") == "unavailable":
                     continue
                 for bar in market["candles"]:
-                    if not bar.get("complete") or bar["time"] + 60 > now.timestamp():
+                    if (
+                        not bar.get("complete") or bar["time"] + 60 > now.timestamp()
+                        or not trading_day(datetime.fromtimestamp(bar["time"], TZ).date())
+                    ):
                         continue
                     frozen = db.execute(
                         "SELECT payload FROM minute_bars WHERE ticker=? AND time=?",
@@ -318,6 +338,8 @@ class PracticeStore(Store):
                         )
                         changed = True
                 quote = market["quote"]
+                if not trading_day(datetime.fromtimestamp(quote["time"], TZ).date()):
+                    continue
                 old = db.execute("SELECT payload FROM marks WHERE ticker=?", (ticker,)).fetchone()
                 mark = {
                     "price": quote["price"],
@@ -368,30 +390,23 @@ class PracticeStore(Store):
                     # A bounded endpoint must not silently skip an offline trading session.
                     for row in relevant:
                         endpoint = datetime.fromtimestamp(row["time"], TZ)
-                        if endpoint - cursor > timedelta(days=7):
-                            raise ValueError("Thiếu lịch sử sau duyệt; dừng khớp để đối soát.")
                         missing = 0
                         while cursor < endpoint:
+                            if not trading_day(cursor.date()):
+                                cursor = datetime.combine(
+                                    cursor.date() + timedelta(days=1), daytime.min, TZ
+                                )
+                                continue
                             if phase(cursor, order["exchange"]) == "continuous":
                                 missing += 1
+                                if missing > 5:
+                                    raise ValueError(
+                                        "Thiếu quá 5 phút giao dịch liên tục sau duyệt; chưa khớp tiếp."
+                                    )
                             cursor += timedelta(minutes=1)
-                        if missing > 5:
-                            raise ValueError(
-                                "Thiếu quá 5 phút giao dịch liên tục sau duyệt; chưa khớp tiếp."
-                            )
                         cursor = endpoint + timedelta(minutes=1)
             result = run_broker(orders, frames, now, exchanges, before["initial_cash"])
-            previous_state = json.loads(before["state"])
-            result["sessions"] = sorted(
-                set(result["sessions"])
-                | set(previous_state.get("sessions", []))
-                | {
-                    day
-                    for market in boards.values()
-                    for day in market.get("completed_sessions", [])
-                    if day < now.date().isoformat() or now.time() >= daytime(15)
-                }
-            )
+            result["sessions"] = sorted(set(result["sessions"]) | valid_prior_days | reported_days)
             # Mark held shares to the latest real trade, while fills only use final bars.
             for ticker, p in result["positions"].items():
                 row = db.execute("SELECT payload FROM marks WHERE ticker=?", (ticker,)).fetchone()

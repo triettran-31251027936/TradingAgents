@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from desktop.market_calendar import SOURCES as CALENDAR_SOURCES
+from desktop.market_calendar import trading_day
 from desktop.vietnam import CHART, _request, load, symbol, write_json
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -22,7 +24,7 @@ INTERVALS = {"1m": ("ONE_MINUTE", 60, 300), "1d": ("ONE_DAY", 86400, 180)}
 def phase(now, exchange="HOSE"):
     now = now.astimezone(TZ)
     clock = now.time()
-    if now.weekday() >= 5:
+    if not trading_day(now.date()):
         return "closed"
     start = daytime(9, 15) if exchange == "HOSE" else daytime(9, 0)
     end = daytime(15, 0) if exchange == "UPCOM" else daytime(14, 30)
@@ -53,7 +55,8 @@ def normalize(raw, interval, now):
         if stamp in seen:
             raise ValueError("Nến trùng timestamp.")
         seen.add(stamp)
-        if stamp > int(now.timestamp()):
+        day = datetime.fromtimestamp(stamp, TZ).date()
+        if stamp > int(now.timestamp()) or not trading_day(day):
             continue
         numbers = [float(v) for v in prices]
         if any(not math.isfinite(v) for v in numbers) or min(numbers[:4]) <= 0 or numbers[-1] < 0:
@@ -64,7 +67,6 @@ def normalize(raw, interval, now):
         if interval == "1m":
             completed = stamp + 60 <= now.timestamp()
         else:
-            day = datetime.fromtimestamp(stamp, TZ).date()
             completed = day < now.astimezone(TZ).date() or now.astimezone(TZ).time() >= daytime(15)
         rows.append(
             {
@@ -100,6 +102,7 @@ def normalize_trades(raw, now):
         if (
             key in seen
             or stamp > now.timestamp()
+            or not trading_day(datetime.fromtimestamp(stamp, TZ).date())
             or min(price, volume) <= 0
             or not math.isfinite(price + volume)
         ):
@@ -207,8 +210,12 @@ def board(ticker, interval, cache_dir, *, now=None, session=None, refresh=False)
                 "source_urls": [CHART, TRADES],
                 "transport": "REST polling, not a guaranteed realtime exchange feed",
                 "trades_error": trade_error,
+                "calendar": {
+                    "year": now.astimezone(TZ).year,
+                    "sources": CALENDAR_SOURCES.get(now.astimezone(TZ).year, ()),
+                },
                 "warnings": [
-                    "Ngày nghỉ/lịch giao dịch đặc biệt chưa có lịch chính thức; giờ hiển thị là khung giờ dự kiến.",
+                    "Khung giờ dự kiến có xét lịch nghỉ toàn thị trường 2025–2026. Lịch riêng theo mã và năm khác cần đối chiếu thêm.",
                     "Giá trên bảng là dữ liệu báo về, không phải báo giá khớp lệnh được bảo đảm.",
                 ],
             }

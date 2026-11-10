@@ -53,10 +53,10 @@ def board(rows):
     }
 
 
-def proposal(store):
+def proposal(store, ticker="HPG.VN"):
     today = datetime.now(TZ).date().isoformat()
     bundle = {
-        "ticker": "HPG.VN",
+        "ticker": ticker,
         "analysis_date": today,
         "fingerprint": "fixture",
         "prices": [{"date": today, "close": 25000}],
@@ -231,6 +231,57 @@ def test_trade_tape_validates_timestamps_and_duplicates():
         )
         == 1
     )
+
+
+@pytest.mark.parametrize("exchange", ["HOSE", "HNX", "UPCOM"])
+def test_published_holidays_and_working_saturdays_are_closed(exchange):
+    for day in ("2025-05-02", "2026-01-02", "2026-02-18", "2026-08-22", "2026-08-31"):
+        assert phase(datetime.fromisoformat(day + "T10:00:00").replace(tzinfo=TZ), exchange) == "closed"
+    assert phase(datetime(2026, 2, 23, 10, tzinfo=TZ), exchange) == "continuous"
+
+
+def test_lunar_holiday_is_not_a_history_gap_for_an_approved_order(tmp_path, monkeypatch):
+    from desktop import paper
+
+    approved = datetime(2026, 2, 13, 14, 46, tzinfo=TZ)
+    monkeypatch.setattr(paper, "_utc", lambda: approved.isoformat())
+    store = PracticeStore(tmp_path)
+    p = proposal(store, "BSR.VN")
+    sign(store, p, monkeypatch)
+    first = datetime(2026, 2, 23, 9, 15, tzinfo=TZ)
+    holiday = datetime(2026, 2, 16, 9, 15, tzinfo=TZ)
+    rows = [
+        {**bar("09:15:00"), "time": int(value.timestamp())}
+        for value in (holiday, first, first.replace(minute=16))
+    ]
+    source = {**board(rows), "completed_sessions": ["2026-02-16", "2026-02-23"]}
+    account = store.sync({"BSR.VN": source}, now=first.replace(minute=17))
+    assert account["orders"][0]["status"] == "FILLED"
+    assert account["orders"][0]["result"]["fill_date"] == "2026-02-23"
+    assert account["positions"]["BSR.VN"]["available_quantity"] == 0
+    with store.connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0] == 2
+
+
+def test_settlement_ignores_reported_session_on_published_market_holiday(tmp_path, monkeypatch):
+    from desktop import paper
+
+    approved = datetime(2026, 4, 29, 9, 16, tzinfo=TZ)
+    monkeypatch.setattr(paper, "_utc", lambda: approved.isoformat())
+    store = PracticeStore(tmp_path)
+    p = proposal(store, "BSR.VN")
+    sign(store, p, monkeypatch)
+    rows = [
+        {**bar("09:15:00"), "time": int(approved.replace(minute=minute).timestamp())}
+        for minute in range(15, 19)
+    ]
+    source = {**board(rows), "completed_sessions": ["2026-04-29", "2026-04-30", "2026-05-01"]}
+    waiting = store.sync({"BSR.VN": source}, now=datetime(2026, 5, 1, 15, tzinfo=TZ))
+    assert waiting["orders"][0]["status"] == "FILLED"
+    assert waiting["positions"]["BSR.VN"]["available_quantity"] == 0
+    source["completed_sessions"] += ["2026-05-04", "2026-05-05"]
+    settled = store.sync({"BSR.VN": source}, now=datetime(2026, 5, 5, 15, tzinfo=TZ))
+    assert settled["positions"]["BSR.VN"]["available_quantity"] == 100
 
 
 def test_market_hours():
