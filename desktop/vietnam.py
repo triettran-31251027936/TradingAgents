@@ -517,6 +517,28 @@ def compute(
     return _safe(metrics), missing
 
 
+def _read_saved_quantitative_snapshot(root, path, ticker, start, asof):
+    try:
+        if (
+            path.name.endswith("_raw.json") or path.is_symlink()
+            or (path.parent / ".publishing").exists()
+            or not path.resolve().is_relative_to(root.resolve())
+            or not 0 < path.stat().st_size <= 12 * 1024 * 1024
+        ):
+            return None
+        snapshot = json.loads(path.read_text())
+        if (
+            snapshot["ticker"] == ticker and start <= snapshot["analysis_date"] <= asof
+            and snapshot["fingerprint"] == digest({
+                k: v for k, v in snapshot.items() if k not in ("sources", "fingerprint")
+            })
+        ):
+            return snapshot
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    return None
+
+
 def saved_quantitative_snapshots(ticker, asof, folder, reports=None, *, start=None):
     """Yield bounded, intact local snapshots for an exact date or short date range."""
     start = start or asof
@@ -531,24 +553,9 @@ def saved_quantitative_snapshots(ticker, asof, folder, reports=None, *, start=No
         paths.extend((reports, p) for p in reports.glob(f"reports/{ticker}_*/quantitative.json"))
         paths.extend((reports, p) for p in reports.glob(f"backtest/**/{ticker}_*/quantitative.json"))
     for root, path in paths:
-        try:
-            if (
-                path.name.endswith("_raw.json") or path.is_symlink()
-                or (path.parent / ".publishing").exists()
-                or not path.resolve().is_relative_to(root.resolve())
-                or not 0 < path.stat().st_size <= 12 * 1024 * 1024
-            ):
-                continue
-            snapshot = json.loads(path.read_text())
-            if (
-                snapshot["ticker"] == ticker and start <= snapshot["analysis_date"] <= asof
-                and snapshot["fingerprint"] == digest({
-                    k: v for k, v in snapshot.items() if k not in ("sources", "fingerprint")
-                })
-            ):
-                yield snapshot
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            continue
+        snapshot = _read_saved_quantitative_snapshot(root, path, ticker, start, asof)
+        if snapshot:
+            yield snapshot
 
 
 def load(
@@ -838,16 +845,22 @@ def load(
                 else "Vietcap OHLCV"
             ),
         )
-        if (
+        if not prices_only and (
             price_basis.get("status") == "anchored" and price_basis.get("date") == asof
+            or prices[-1]["date"] == asof and valuation_observed_at[:10] == asof
         ):
-            from desktop.valuation import replay_provider_observations
+            from desktop.valuation import PROVIDER_OBSERVATIONS, replay_provider_observations
 
-            saved = replay_provider_observations(
-                ticker + ".VN", asof, prices[-1]["close"], valuation_proof["statement_ttm_end"],
-                folder, Path(report_dir) if report_dir else None,
+            current_count = sum(metrics.get(key, {}).get("value") is not None for key in PROVIDER_OBSERVATIONS)
+            saved = (
+                replay_provider_observations(
+                    ticker + ".VN", asof, prices[-1]["close"], valuation_proof["statement_ttm_end"],
+                    folder, Path(report_dir) if report_dir else None,
+                )
+                if current_count < len(PROVIDER_OBSERVATIONS)
+                else None
             )
-            if saved:
+            if saved and len(saved["fields"]) > current_count:
                 metrics.update(saved["fields"])
                 valuation_proof["provider_archive"] = {
                     key: value for key, value in saved.items() if key != "fields"
@@ -1146,6 +1159,13 @@ def load(
         }
         bundle = _safe(bundle)
         bundle["fingerprint"] = digest({k: v for k, v in bundle.items() if k != "sources"})
+        if not prices_only:
+            from desktop.valuation import archive_provider_observation
+
+            previous = _read_saved_quantitative_snapshot(folder, path, bundle["ticker"], asof, asof)
+            if previous:
+                archive_provider_observation(previous, folder)
+            archive_provider_observation(bundle, folder)
         write_json(path, bundle)
         write_json(folder / (path.stem + "_raw.json"), raw)
         return bundle

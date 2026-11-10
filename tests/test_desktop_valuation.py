@@ -558,3 +558,62 @@ def test_provider_replay_requires_same_day_same_close_and_intact_saved_snapshot(
     item["metrics"]["shares_marketcap_observed"]["value"] = 101
     write_json(path, item)
     assert replay() is None
+
+
+def test_immutable_provider_receipt_survives_rolling_cache_replacement(tmp_path):
+    from desktop.valuation import archive_provider_observation, replay_provider_observations
+    from desktop.vietnam import digest, write_json
+
+    day = "2026-03-02"
+
+    def snapshot(hour, include_stats):
+        stamp = f"{day}T{hour}:00:00+07:00"
+        row = {"asof": day, "value": 100, "status": "available", "formula": "Observed"}
+        data = {
+            "ticker": "AAA.VN",
+            "analysis_date": day,
+            "prices": [{"date": day, "close": 10}],
+            "valuation_observed_at": stamp,
+            "valuation_reconciliation": {
+                "status": "verified_current_inputs", "marketcap_price_aligned": True,
+                "market_input_source": "company_details", "statement_ttm_end": [2025, 4],
+                "quote_comparison": {
+                    "canonical_date": day, "canonical_close": 10, "provider_observed_at": stamp,
+                },
+            },
+            "metrics": {
+                "shares_marketcap_observed": row,
+                "provider_pe_ttm_observed": {**row, "value": 10},
+            },
+            "sources": [{"name": "company_details", "retrieved_at": stamp, "sha256": "a" * 64,
+                         "url": "https://iq.vietcap.com.vn/details"}],
+        }
+        if include_stats:
+            data["sources"].append({"name": "valuation", "retrieved_at": stamp, "sha256": "b" * 64,
+                                    "url": "https://iq.vietcap.com.vn/statistics-financial"})
+        data["fingerprint"] = digest({k: v for k, v in data.items() if k != "sources"})
+        return data
+
+    complete = snapshot("16", True)
+    partial = snapshot("17", False)
+    archive_provider_observation(complete, tmp_path)
+    archive_provider_observation(partial, tmp_path)
+    rolling = tmp_path / f"AAA_{day}_v32_news20.json"
+    write_json(rolling, {"status": "replaced"})
+    def replay(period=(2025, 4)):
+        return replay_provider_observations("AAA.VN", day, 10, list(period), tmp_path)
+
+    assert replay()["fields"]["provider_pe_ttm_observed"]["value"] == 10
+    assert {row["name"] for row in replay()["source_receipts"]} == {"company_details", "valuation"}
+    assert replay()["original_snapshot_fingerprint"] == complete["fingerprint"]
+    assert set(replay((2025, 3))["fields"]) == {"shares_marketcap_observed"}
+
+    derived = snapshot("18", True)
+    derived["valuation_reconciliation"]["provider_archive"] = {"observed_at": complete["valuation_observed_at"]}
+    archive_provider_observation(derived, tmp_path)
+    receipts = list(tmp_path.glob("valuation-observations/AAA/*/*.json"))
+    assert len(receipts) == 2
+    full = next(path for path in receipts if '"provider_pe_ttm_observed"' in path.read_text())
+    full.write_text(full.read_text().replace('"value": 10,', '"value": 11,'))
+    assert set(replay()["fields"]) == {"shares_marketcap_observed"}
+    assert replay_provider_observations("AAA.VN", day, 11, [2025, 4], tmp_path) is None

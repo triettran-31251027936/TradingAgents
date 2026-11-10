@@ -7,6 +7,7 @@ calculations or as a point-in-time historical archive.
 from __future__ import annotations
 
 import calendar
+import json
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -495,59 +496,134 @@ PROVIDER_OBSERVATIONS = (
 )
 
 
+def _provider_candidate(snapshot, asof, close, ttm_end, *, archive=False):
+    try:
+        stamp = datetime.fromisoformat(snapshot["valuation_observed_at"])
+        if stamp.tzinfo is None:
+            return None
+        stamp = stamp.astimezone(TZ)
+        saved = snapshot["valuation_reconciliation"]
+        comparison = saved["quote_comparison"]
+        source_name = "company_details" if saved["market_input_source"] == "company_details" else "valuation"
+        sources = [
+            row for row in snapshot["sources"]
+            if row["name"] in ("company_details", "valuation")
+            and isinstance(row.get("url"), str)
+            and len(row.get("sha256", "")) == 64
+            and datetime.fromisoformat(row["retrieved_at"]).tzinfo is not None
+            and datetime.fromisoformat(row["retrieved_at"]).astimezone(TZ).date().isoformat() == asof
+        ]
+        primary = [row for row in sources if row["name"] == source_name]
+        if (
+            stamp.date().isoformat() != asof or saved["status"] != "verified_current_inputs"
+            or saved.get("provider_archive")
+            or not saved["marketcap_price_aligned"] or len(primary) != 1
+            or comparison["canonical_date"] != asof or comparison["canonical_close"] != close
+            or comparison["provider_observed_at"] != snapshot["valuation_observed_at"]
+        ):
+            return None
+        metrics = snapshot["metrics"]
+        stats = [row for row in sources if row["name"] == "valuation"]
+        keys = (
+            PROVIDER_OBSERVATIONS
+            if saved["statement_ttm_end"] == ttm_end and (not archive or len(stats) == 1)
+            else PROVIDER_OBSERVATIONS[:1]
+        )
+        records = {
+            key: metrics[key] for key in keys
+            if key in metrics and metrics[key]["asof"] == asof
+            and metrics[key]["status"] == "available"
+            and number(metrics[key]["value"]) is not None
+        }
+        shares = records["shares_marketcap_observed"]["value"]
+        if shares <= 0 or not float(shares).is_integer():
+            return None
+        return stamp, snapshot["fingerprint"], records, primary[0], sources
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def _observation_folder(folder, ticker, asof):
+    from desktop.vietnam import symbol
+
+    day = date.fromisoformat(asof).isoformat()
+    return folder / "valuation-observations" / symbol(ticker) / day
+
+
+def archive_provider_observation(snapshot, folder):
+    """Store the verified comparison fields before the rolling cache is replaced."""
+    from desktop.vietnam import digest, write_json
+
+    saved = snapshot.get("valuation_reconciliation", {})
+    if saved.get("status") != "verified_current_inputs" or not snapshot.get("prices"):
+        return
+    asof = snapshot["analysis_date"]
+    candidate = _provider_candidate(
+        snapshot, asof, snapshot["prices"][-1]["close"], saved.get("statement_ttm_end"), archive=True
+    )
+    if not candidate:
+        return
+    _, fingerprint, fields, _, sources = candidate
+    receipt = {
+        "ticker": snapshot["ticker"],
+        "analysis_date": asof,
+        "valuation_observed_at": snapshot["valuation_observed_at"],
+        "valuation_reconciliation": {
+            key: saved[key] for key in (
+                "status", "marketcap_price_aligned", "market_input_source", "statement_ttm_end",
+                "quote_comparison",
+            )
+        },
+        "metrics": fields,
+        "sources": sources,
+        "fingerprint": fingerprint,
+    }
+    path = _observation_folder(folder, receipt["ticker"], asof) / (digest(receipt) + ".json")
+    if not path.is_file():
+        if not path.resolve().is_relative_to(folder.resolve()):
+            raise ValueError("Valuation receipt path escapes the data cache")
+        write_json(path, receipt)
+
+
 def replay_provider_observations(ticker, asof, close, ttm_end, folder, reports=None):
     """Recover comparison-only fields from a verified same-day saved snapshot."""
-    from desktop.vietnam import saved_quantitative_snapshots
+    from desktop.vietnam import digest, saved_quantitative_snapshots
 
     candidates = []
-    for snapshot in saved_quantitative_snapshots(ticker, asof, folder, reports):
+    for path in _observation_folder(folder, ticker, asof).glob("*.json"):
         try:
-            stamp = datetime.fromisoformat(snapshot["valuation_observed_at"])
-            if stamp.tzinfo is None:
+            if path.is_symlink() or not path.resolve().is_relative_to(folder.resolve()):
                 continue
-            stamp = stamp.astimezone(TZ)
-            saved = snapshot["valuation_reconciliation"]
-            comparison = saved["quote_comparison"]
-            source_name = "company_details" if saved["market_input_source"] == "company_details" else "valuation"
-            source = [
-                row for row in snapshot["sources"] if row["name"] == source_name
-                and len(row.get("sha256", "")) == 64
-                and datetime.fromisoformat(row["retrieved_at"]).astimezone(TZ).date().isoformat() == asof
-            ]
+            if not 0 < path.stat().st_size <= 64 * 1024:
+                continue
+            receipt = json.loads(path.read_text())
             if (
-                stamp.date().isoformat() != asof or saved["status"] != "verified_current_inputs"
-                or not saved["marketcap_price_aligned"] or len(source) != 1
-                or comparison["canonical_date"] != asof or comparison["canonical_close"] != close
-                or comparison["provider_observed_at"] != snapshot["valuation_observed_at"]
+                path.stem == digest(receipt)
+                and receipt["ticker"] == ticker
+                and receipt["analysis_date"] == asof
             ):
-                continue
-            metrics = snapshot["metrics"]
-            keys = (
-                PROVIDER_OBSERVATIONS if saved["statement_ttm_end"] == ttm_end
-                else PROVIDER_OBSERVATIONS[:1]
-            )
-            records = {
-                key: metrics[key] for key in keys
-                if key in metrics and metrics[key]["asof"] == asof
-                and metrics[key]["status"] == "available"
-                and number(metrics[key]["value"]) is not None
-            }
-            if "shares_marketcap_observed" not in records:
-                continue
-            shares = records["shares_marketcap_observed"]["value"]
-            if shares <= 0 or not float(shares).is_integer():
-                continue
-            candidates.append((stamp, snapshot["fingerprint"], records, source[0]))
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                candidate = _provider_candidate(receipt, asof, close, ttm_end, archive=True)
+                if candidate:
+                    candidates.append(candidate)
+        except (OSError, ValueError, KeyError, TypeError):
             continue
+    for snapshot in saved_quantitative_snapshots(ticker, asof, folder, reports):
+        candidate = _provider_candidate(snapshot, asof, close, ttm_end)
+        if candidate:
+            candidates.append(candidate)
     if not candidates:
         return None
-    stamp, fingerprint, records, source = max(candidates, key=lambda item: (item[0], item[1]))
+    # A later observation with only shares cannot erase a coherent earlier
+    # same-session set. Compare breadth first, then the observation timestamp.
+    stamp, fingerprint, records, source, sources = max(
+        candidates, key=lambda item: (len(item[2]), item[0], item[1])
+    )
     return {
         "observed_at": stamp.isoformat(),
         "original_snapshot_fingerprint": fingerprint,
         "source_url": source["url"],
         "source_sha256": source["sha256"],
+        "source_receipts": sources,
         "fields": {
             key: {**row, "formula": row["formula"] + "; replayed same-day saved provider observation"}
             for key, row in records.items()
