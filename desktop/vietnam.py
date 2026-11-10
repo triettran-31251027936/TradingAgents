@@ -29,7 +29,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 23
+VERSION = 24
 LOCK = threading.Lock()
 
 
@@ -283,6 +283,7 @@ def compute(
     valuation_proof=None,
     company_profile=None,
     share_registry=None,
+    price_source="Vietcap OHLCV",
 ):
     df = pd.DataFrame(rows).set_index("date")
     close = df["close"]
@@ -291,7 +292,7 @@ def compute(
     metrics = {}
     missing = []
 
-    def add(name, value, unit, formula, source="Vietcap OHLCV", asof=None):
+    def add(name, value, unit, formula, source=price_source, asof=None):
         value = _number(value)
         metrics[name] = {
             "value": value,
@@ -611,9 +612,17 @@ def load(
             start=history_start,
         )
         prices = analysis_history(prices, asof, prices_only)
-        from desktop.technical_vietnam import check_freshness
+        from desktop.technical_vietnam import anchor_history, check_freshness
 
         check_freshness(prices, ticker + ".VN", asof)
+        price_basis = {}
+        if not prices_only and asof < datetime.now(TZ).date().isoformat():
+            prices, price_basis = anchor_history(prices, ticker, fetch)
+            if price_basis["status"] == "unverified":
+                warnings.append(
+                    "Historical price anchor unavailable or inconsistent; the Vietcap scale "
+                    "is retained and absolute levels may differ from actual traded prices."
+                )
         news_start = (date.fromisoformat(asof) - timedelta(days=7)).isoformat()
         news, news_coverage = (
             ([], {})
@@ -698,6 +707,11 @@ def load(
             valuation_proof=valuation_proof,
             company_profile=company_profile,
             share_registry=registry,
+            price_source=(
+                "Vietcap OHLCV / CafeF session-price anchor"
+                if price_basis.get("status") == "anchored"
+                else "Vietcap OHLCV"
+            ),
         )
         from desktop.bank_metrics import extend as extend_bank
 
@@ -900,6 +914,7 @@ def load(
             "currency": "VND",
             "provider": "Vietcap public market data",
             "prices": prices,
+            "price_basis": price_basis,
             "benchmark": benchmark,
             "history_coverage": {
                 "requested_candles": 600 if prices_only else 1500,
@@ -928,7 +943,10 @@ def load(
             "market_news": market_news,
             "sources": sources,
             "basis": [
-                "Prices as returned by source; historical corporate-action adjustments may apply.",
+                price_basis.get(
+                    "description",
+                    "Prices as returned by source; historical corporate-action adjustments may apply.",
+                ),
                 "Published-date filtering is date-level. Restated accounts are not a point-in-time archive.",
                 "Statement values are raw VND except per-share/ratio/share-count fields. No conversion from billions.",
                 "TTM flows require contiguous quarters and empirical quarter/FY reconciliation within0.5%; methodology can change. See financial_reconciliation. Raw CFO is not automatically TTM FCF.",
@@ -960,6 +978,7 @@ def capsule(bundle):
                 "valuation_reconciliation",
                 "metrics",
                 "history_coverage",
+                "price_basis",
                 "missing",
                 "warnings",
                 "basis",

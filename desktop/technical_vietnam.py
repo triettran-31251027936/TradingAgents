@@ -1,6 +1,8 @@
 """Original stockstats indicators on the canonical VN completed-candle series."""
 
+import math
 from datetime import date, timedelta
+from urllib.parse import urlencode
 
 import pandas as pd
 from stockstats import wrap
@@ -12,6 +14,62 @@ INDICATORS = (
     "close_50_sma", "close_200_sma", "close_10_ema", "macd", "macds", "macdh",
     "rsi", "boll", "boll_ub", "boll_lb", "atr", "vwma", "mfi",
 )
+
+
+_PRICE_HISTORY = "https://cafef.vn/du-lieu/Ajax/PageNew/DataHistory/PriceHistory.ashx"
+_SOURCE_BASIS = "Vietcap prices on the provider's current adjustment basis. Historical closes may differ from actual session prices."
+OHLC = ("open", "high", "low", "close")
+
+
+def anchor_history(rows, ticker, fetch):
+    """Convert a historical adjusted series to the last completed session's price scale."""
+    anchor = rows[-1]
+    day = date.fromisoformat(anchor["date"])
+    query = urlencode({
+        "Symbol": ticker, "StartDate": day.strftime("%m/%d/%Y"),
+        "EndDate": day.strftime("%m/%d/%Y"), "PageIndex": 1, "PageSize": 1,
+    })
+    raw = fetch("CafeF historical price anchor", f"{_PRICE_HISTORY}?{query}")
+    try:
+        if raw["Success"] is not True or raw["Data"]["TotalCount"] != 1:
+            raise ValueError("Expected one session")
+        item, = raw["Data"]["Data"]
+        if item["Symbol"] != ticker or item["Ngay"] != day.strftime("%d/%m/%Y"):
+            raise ValueError("Mismatched ticker or session")
+        fields = ("GiaMoCua", "GiaCaoNhat", "GiaThapNhat", "GiaDongCua", "GiaDieuChinh")
+        values = [item[k] for k in fields]
+        if any(type(v) not in (int, float) or not math.isfinite(v) or v <= 0 for v in values):
+            raise ValueError("Invalid CafeF prices")
+        opening, high, low, close, adjusted = [v * 1000 for v in values]
+        if not low <= min(opening, close) <= max(opening, close) <= high:
+            raise ValueError("Invalid CafeF high/low")
+        # CafeF displays adjusted closes at 0.01 thousand VND precision.
+        # Require same-session alignment before inferring any scale factor.
+        if not math.isclose(adjusted, anchor["close"], rel_tol=0, abs_tol=5.001):
+            raise ValueError("Sources disagree on adjusted close")
+        factor = close / anchor["close"]
+        if any(
+            not math.isclose(anchor[key] * factor, observed, rel_tol=0, abs_tol=10)
+            for key, observed in zip(OHLC, (opening, high, low, close), strict=True)
+        ):
+            raise ValueError("Sources disagree on candle shape")
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return rows, {"status": "unverified", "description": _SOURCE_BASIS}
+    return [
+        {**r, **{key: r[key] / anchor["close"] * close for key in OHLC}} for r in rows
+    ], {
+        "status": "anchored",
+        "date": anchor["date"],
+        "observed_close_vnd": close,
+        "vietcap_adjusted_close_vnd": anchor["close"],
+        "cafef_adjusted_close_vnd": adjusted,
+        "scale_factor": factor,
+        "description": (
+            f"Vietcap OHLC rescaled to the CafeF actual close on {anchor['date']}. "
+            "Earlier bars remain adjusted on that session's price scale. Volume is unchanged. "
+            "This is not an archived vintage or a certified total-return series."
+        ),
+    }
 
 
 def check_freshness(rows, ticker, asof):
@@ -35,10 +93,12 @@ def prices(bundle, start, end):
         "only the bounded overlap, not verified full history.\n"
         if start < earliest else ""
     )
+    basis = bundle.get("price_basis", {}).get("description", _SOURCE_BASIS)
     return (
         f"# Stock data for {bundle['ticker']} from {start} to {end}\n"
         f"# Total records: {len(rows)}\n"
         "Source: Vietcap; prices VND/share, volume shares; completed candles only.\n"
+        + basis + "\n"
         + coverage
         + pd.DataFrame(rows).to_csv(index=False)
     )
@@ -75,9 +135,11 @@ def indicator(bundle, name, asof, look_back_days=30):
         if name == "mfi"
         else "index (0–100), not VND" if name == "rsi" else "VND/share"
     )
+    basis = bundle.get("price_basis", {}).get("description", _SOURCE_BASIS)
     return (
         f"## {name} values from {start.isoformat()} to {asof}:\n\n"
         "Source: Vietcap completed OHLCV; original stockstats formula/default window.\n"
+        f"{basis}\n"
         f"Unit: {unit}. Window: inclusive calendar dates; no candle is not a zero.\n"
         + "\n".join(lines) + "\n"
     )

@@ -154,3 +154,42 @@ def test_bad_candle_outside_requested_history_does_not_poison_current_window():
 def test_invalid_normalization_window_rejected():
     with pytest.raises(ValueError, match="start"):
         vietnam.normalize_prices({}, "2026-11-04", start="2026-11-05")
+
+
+def test_historical_price_anchor_restores_absolute_scale_without_changing_returns():
+    from desktop.technical_vietnam import anchor_history
+
+    rows = [
+        {"date": "2026-08-04", "open": 74100, "high": 76650, "low": 73400, "close": 76450, "volume": 9141600},
+        {"date": "2026-08-05", "open": 77100, "high": 79400, "low": 76500, "close": 76500, "volume": 10722235},
+    ]
+    item = {
+        "Symbol": "VHM", "Ngay": "05/08/2026", "GiaMoCua": 154.2, "GiaCaoNhat": 158.8,
+        "GiaThapNhat": 153, "GiaDongCua": 153, "GiaDieuChinh": 76.5,
+    }
+
+    def fetch(_name, url):
+        from urllib.parse import parse_qs, urlsplit
+
+        params = parse_qs(urlsplit(url).query)
+        assert params["StartDate"] == params["EndDate"] == ["08/05/2026"]
+        assert params["Symbol"] == ["VHM"]
+        return {"Success": True, "Data": {"TotalCount": 1, "Data": [item]}}
+
+    scaled, basis = anchor_history(rows, "VHM", fetch)
+    assert scaled[-1]["close"] == 153000
+    assert scaled[-1]["volume"] == rows[-1]["volume"]
+    assert scaled[-1]["close"] / scaled[0]["close"] == pytest.approx(
+        rows[-1]["close"] / rows[0]["close"]
+    )
+    assert basis["scale_factor"] == 2
+    assert "Earlier bars remain adjusted" in basis["description"]
+    assert rows[-1]["close"] == 76500
+
+    for field, incorrect in [("Ngay", "04/08/2026"), ("GiaDieuChinh", 77), ("GiaMoCua", 157)]:
+        original = item[field]
+        item[field] = incorrect
+        original_rows, unavailable = anchor_history(rows, "VHM", fetch)
+        assert original_rows is rows
+        assert unavailable["status"] == "unverified"
+        item[field] = original
