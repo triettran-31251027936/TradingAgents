@@ -109,6 +109,33 @@ def anchor_history(rows, ticker, fetch):
     }
 
 
+def anchor_hnx_history(rows, observed):
+    anchor = rows[-1]
+    prices = observed["ohlc_vnd"]
+    opening, high, low, close = (prices[key] for key in OHLC)
+    if observed["date"] != anchor["date"] or not 0 < low <= min(opening, close) <= max(opening, close) <= high:
+        raise ValueError("Invalid HNX session anchor")
+    factor = close / anchor["close"]
+    if any(abs(anchor[key] * factor - prices[key]) > 10 for key in OHLC):
+        raise ValueError("HNX and Vietcap disagree on candle shape")
+    scaled = rows if factor == 1 else [
+        {**row, **{key: row[key] / anchor["close"] * close for key in OHLC}} for row in rows
+    ]
+    return scaled, {
+        "status": "anchored",
+        "date": anchor["date"],
+        "observed_close_vnd": close,
+        "vietcap_adjusted_close_vnd": anchor["close"],
+        "scale_factor": factor,
+        "source": "HNX",
+        "description": (
+            f"Vietcap OHLC anchored to the HNX published closing price on {anchor['date']}. "
+            "Earlier bars remain adjusted on that session's price scale. Volume is unchanged. "
+            "This is not an archived vintage or a certified total-return series."
+        ),
+    }
+
+
 def check_freshness(rows, ticker, asof):
     if not rows:
         raise NoMarketDataError(ticker, detail="No completed candles in requested range")

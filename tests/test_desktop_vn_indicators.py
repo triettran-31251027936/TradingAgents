@@ -231,3 +231,40 @@ def test_historical_price_anchor_restores_absolute_scale_without_changing_return
         assert original_rows is rows
         assert unavailable["status"] == "unverified"
         item[field] = original
+
+
+
+def test_hnx_price_anchor_reads_published_session_within_public_window(monkeypatch):
+    from desktop import hnx_prices
+
+    page = (
+        b'<input id="txtSymbol_Date" value="09/11/2026">'
+        b"CheckCompare2Date_ddMMyyyy('09/10/2026', _symbol_date)"
+    )
+    columns = ("col_a", "col_k", "col_e", "col_f", "col_g", "col_h")
+    values = ("PVS", "VN000000PVS0", "32.500", "32.300", "33.100", "32.200")
+    headings = "".join(f'<th id="{name}"></th>' for name in columns)
+    cells = "".join(f"<td>{value}</td>" for value in values)
+    body = (f'<table id="_tableDatas"><thead><tr>{headings}</tr></thead>'
+            f"<tbody><tr>{cells}</tr></tbody></table>").encode()
+    calls = []
+
+    def html(url, fields=None):
+        calls.append(url)
+        if url == hnx_prices.PAGE:
+            return page
+        assert fields["p_keysearch"] == "23/10/2026|0|0|'PVS'|0|09/11/2026"
+        return body
+
+    monkeypatch.setattr(hnx_prices, "_html", html)
+    with pytest.raises(ValueError, match="outside"):
+        hnx_prices.observation("PVS", date(2025, 5, 15))
+    assert calls == [hnx_prices.PAGE]
+    observation = hnx_prices.observation("PVS", date(2026, 10, 23))
+    assert observation["ohlc_vnd"] == {"open": 32500, "close": 32300, "high": 33100, "low": 32200}
+    row = {"date": "2026-10-23", **observation["ohlc_vnd"], "volume": 1851100}
+    rows = [row]
+    scaled, basis = vn.anchor_hnx_history(rows, observation)
+    assert scaled is rows and basis["source"] == "HNX" and basis["observed_close_vnd"] == 32300
+    with pytest.raises(ValueError, match="candle shape"):
+        vn.anchor_hnx_history([{**row, "high": 33500}], observation)

@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import re
+import subprocess
 import threading
 import time
 import uuid
@@ -674,9 +675,44 @@ def load(
         prices = analysis_history(prices, asof, prices_only)
 
         check_freshness(prices, ticker + ".VN", asof)
+        universe_path = folder / "symbols.json"
+        universe = (
+            json.loads(universe_path.read_text())
+            if universe_path.is_file()
+            and not universe_path.is_symlink()
+            and time.time() - universe_path.stat().st_mtime < 86400
+            else fetch("symbols", "https://trading.vietcap.com.vn/api/price/symbols/getAll")
+        )
+        if universe:
+            write_json(universe_path, universe)
+        listing = universe.get("data", []) if isinstance(universe, dict) else universe
+        instrument = (
+            next((r for r in listing if r.get("symbol") == ticker), {})
+            if isinstance(listing, list)
+            else {}
+        )
+        exchange = instrument.get("board") or instrument.get("exchange")
+        exchange = {"HSX": "HOSE"}.get(exchange, exchange)
         price_basis = {}
         if not prices_only and asof < datetime.now(TZ).date().isoformat():
             prices, price_basis = anchor_history(prices, ticker, fetch)
+            if price_basis["status"] == "unverified" and exchange == "HNX":
+                from desktop import hnx_prices
+                from desktop.technical_vietnam import anchor_hnx_history
+
+                try:
+                    observed = hnx_prices.observation(ticker, date.fromisoformat(prices[-1]["date"]))
+                    prices, price_basis = anchor_hnx_history(prices, observed)
+                except (ValueError, OSError, requests.RequestException, subprocess.SubprocessError):
+                    pass
+                else:
+                    raw["HNX historical price anchor"] = observed
+                    sources.append({
+                        "name": "HNX historical price anchor",
+                        "url": observed["url"],
+                        "retrieved_at": datetime.now(UTC).isoformat(),
+                        "sha256": observed["sha256"],
+                    })
             if price_basis["status"] == "unverified":
                 warnings.append(
                     "Historical price anchor unavailable or inconsistent; the Vietcap scale "
@@ -788,7 +824,7 @@ def load(
             share_registry=registry,
             price_basis=price_basis,
             price_source=(
-                "Vietcap OHLCV / CafeF session-price anchor"
+                f"Vietcap OHLCV / {price_basis.get('source', 'CafeF')} session-price anchor"
                 if price_basis.get("status") == "anchored"
                 else "Vietcap OHLCV"
             ),
@@ -1032,24 +1068,6 @@ def load(
                 }
             warnings.extend(market_news.get("warnings", []))
             sources.extend(market_news.get("sources", []))
-        universe_path = folder / "symbols.json"
-        universe = (
-            json.loads(universe_path.read_text())
-            if universe_path.is_file()
-            and not universe_path.is_symlink()
-            and time.time() - universe_path.stat().st_mtime < 86400
-            else fetch("symbols", "https://trading.vietcap.com.vn/api/price/symbols/getAll")
-        )
-        if universe:
-            write_json(universe_path, universe)
-        listing = universe.get("data", []) if isinstance(universe, dict) else universe
-        instrument = (
-            next((r for r in listing if r.get("symbol") == ticker), {})
-            if isinstance(listing, list)
-            else {}
-        )
-        exchange = instrument.get("board") or instrument.get("exchange")
-        exchange = {"HSX": "HOSE"}.get(exchange, exchange)
         bundle = {
             "exchange": exchange,
             "company_name": instrument.get("enOrganName") or instrument.get("organName") or ticker,
