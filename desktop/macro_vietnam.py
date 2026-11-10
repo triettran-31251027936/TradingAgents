@@ -12,7 +12,8 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time as day_time, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -416,6 +417,36 @@ def parse_source(kind, raw, asof, observed):
     return parsed
 
 
+def server_dating(kind, raw, parsed, response, url, now):
+    """Use two timestamps from the exact bytes and official serving response."""
+    if getattr(response, "url", None) != url:
+        raise ValueError("NSDP server dating requires the exact official URL")
+    modified = getattr(response, "headers", {}).get("Last-Modified")
+    if not modified:
+        raise ValueError("NSDP server did not supply Last-Modified")
+    server = parsedate_to_datetime(modified)
+    if kind in WORKBOOKS:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            entry = archive.getinfo("docProps/core.xml")
+            if entry.file_size > 65536:
+                raise ValueError("Oversized NSDP workbook metadata")
+            node = ET.fromstring(archive.read(entry))
+        content = node.findtext("{http://purl.org/dc/terms/}modified")
+    else:
+        stamps = {row["prepared_at"] for row in parsed.values()}
+        content = stamps.pop() if len(stamps) == 1 else None
+    if not content:
+        raise ValueError("NSDP file lacks one dated preparation or modification field")
+    internal = datetime.fromisoformat(content.replace("Z", "+00:00"))
+    if server.tzinfo is None or internal.tzinfo is None or not internal <= server <= now:
+        raise ValueError("NSDP timestamps unzoned, out of order or in the future")
+    return {
+        "server_modified_at": server.isoformat(),
+        "content_timestamp": internal.isoformat(),
+        "content_timestamp_kind": "workbook_modified" if kind in WORKBOOKS else "sdmx_prepared",
+    }
+
+
 def fetch(kind, cache_dir, asof, now, session):
     url = WORKBOOKS[kind] if kind in WORKBOOKS else ROOT + FILES[kind]
     suffix = ".xlsx" if kind in WORKBOOKS else ".xml"
@@ -425,26 +456,28 @@ def fetch(kind, cache_dir, asof, now, session):
     cached = (
         json.loads(latest.read_text()) if latest.is_file() and not latest.is_symlink() else None
     )
-    if asof < now.date():
+    historical = asof < now.date()
+    cutoff = datetime.combine(asof, day_time.max, TZ)
+    if historical:
         candidates = []
         for path in folder.glob("*.snapshot.json"):
             if path.is_symlink():
                 continue
             record = json.loads(path.read_text())
-            if datetime.fromisoformat(record["first_observed_at"]).astimezone(TZ).date() <= asof:
+            observed = datetime.fromisoformat(record["first_observed_at"])
+            modified = record.get("server_modified_at")
+            if observed <= cutoff or modified and datetime.fromisoformat(modified) <= cutoff:
                 candidates.append(record)
-        if not candidates:
-            return {
-                "status": "withheld",
-                "reason": "No locally observed NSDP vintage available by analysis date",
-                "url": url,
-            }
-        cached = max(candidates, key=lambda x: x["first_observed_at"])
+        cached = max(
+            candidates,
+            key=lambda r: datetime.fromisoformat(r.get("server_modified_at") or r["first_observed_at"]),
+            default=None,
+        )
     elif asof > now.date():
         return {"status": "withheld", "reason": "Future analysis date", "url": url}
-    elif (
-        not cached
-        or now.timestamp() - datetime.fromisoformat(cached["retrieved_at"]).timestamp() >= 21600
+    if not cached or (
+        not historical
+        and now.timestamp() - datetime.fromisoformat(cached["retrieved_at"]).timestamp() >= 21600
     ):
         try:
             time.sleep(0.35)
@@ -461,7 +494,15 @@ def fetch(kind, cache_dir, asof, now, session):
             finally:
                 response.close()
             raw = b"".join(chunks)
-            parse_source(kind, raw, asof, now)
+            parsed = parse_source(kind, raw, asof, now)
+            dating = {}
+            try:
+                dating = server_dating(kind, raw, parsed, response, url, now)
+                if historical and datetime.fromisoformat(dating["server_modified_at"]) > cutoff:
+                    raise ValueError("NSDP file was updated after the analysis cutoff")
+            except (ValueError, TypeError, KeyError, ET.ParseError) as exc:
+                if historical:
+                    return {"status": "withheld", "reason": str(exc), "url": url}
             digest = hashlib.sha256(raw).hexdigest()
             path = folder / (digest + suffix)
             record_path = folder / (digest + ".snapshot.json")
@@ -481,14 +522,19 @@ def fetch(kind, cache_dir, asof, now, session):
                 "sha256": digest,
                 "retrieved_at": now.isoformat(),
                 "first_observed_at": old["first_observed_at"] if old else now.isoformat(),
+                **{k: v for k, v in (old or {}).items() if k in (
+                    "server_modified_at", "content_timestamp", "content_timestamp_kind"
+                )},
+                **dating,
             }
             write_json(record_path, cached)
-            write_json(latest, cached)
+            if not historical:
+                write_json(latest, cached)
         except (requests.RequestException, ValueError, ET.ParseError) as exc:
             if not cached:
                 return {
-                    "status": "unavailable",
-                    "reason": type(exc).__name__,
+                    "status": "withheld" if historical else "unavailable",
+                    "reason": ("No eligible historical NSDP file: " if historical else "") + type(exc).__name__,
                     "url": url,
                 }
             cached = {**cached, "status": "cached_source_error", "error": type(exc).__name__}
@@ -499,7 +545,14 @@ def fetch(kind, cache_dir, asof, now, session):
     if hashlib.sha256(raw).hexdigest() != cached["sha256"]:
         raise ValueError("NSDP cache checksum mismatch")
     observed = datetime.fromisoformat(cached["first_observed_at"])
-    return {**cached, "series": parse_source(kind, raw, asof, observed)}
+    basis = (
+        "dated_official_file_retrieved_later" if historical and observed > cutoff
+        else "observed_by_analysis_date"
+    )
+    source_date = asof
+    if basis == "dated_official_file_retrieved_later":
+        source_date = min(asof, datetime.fromisoformat(cached["server_modified_at"]).astimezone(TZ).date())
+    return {**cached, "source_basis": basis, "series": parse_source(kind, raw, source_date, observed)}
 
 
 def normalize(alias, series, source, asof):
@@ -557,6 +610,9 @@ def normalize(alias, series, source, asof):
         "first_observed_at": source["first_observed_at"],
         "retrieved_at": source["retrieved_at"],
         "prepared_at": series["prepared_at"],
+        "source_basis": source.get("source_basis"),
+        "server_modified_at": source.get("server_modified_at"),
+        "content_timestamp": source.get("content_timestamp"),
         "frequency": series["frequency"],
         "indicator": series["indicator"],
         "dimensions": dim,
@@ -635,7 +691,7 @@ def load(asof, cache_dir, *, now=None, session=None):
         "series": {},
         "sources": [],
         "warnings": [],
-        "scope": "NSDP file observations, not necessarily the newest official press release; no interpolation or historical publication-date assumptions",
+        "scope": "NSDP file observations. Historical files require local observation by the cutoff or matching evidence from official HTTP Last-Modified and the file's own timestamp. Later retrieval is disclosed and does not establish a complete revision archive.",
     }
     for kind, source in sources.items():
         output["sources"].append({k: v for k, v in source.items() if k != "series"})
@@ -902,6 +958,8 @@ def metrics(bundle):
             value = value / 100 if value is not None else None
             unit = "fraction"
             formula += "; raw percent divided by 100"
+        if entry.get("source_basis") == "dated_official_file_retrieved_later":
+            formula += "; official file dated " + entry["server_modified_at"] + ", retrieved later"
         if entry.get("reason"):
             formula += "; " + entry["reason"]
         formula += (

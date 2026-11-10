@@ -95,10 +95,11 @@ def test_stale_period_is_not_presented_as_current(tmp_path, monkeypatch):
     assert m.metrics(result)["vn_unemployment"]["asof"] == "2026-06-30"
 
 
-def test_no_unobserved_historical_macro_leaks_or_requests(tmp_path):
+def test_historical_file_without_official_metadata_is_withheld(tmp_path, monkeypatch):
+    monkeypatch.setattr(m.time, "sleep", lambda *_: None)
     session = Session()
     result = m.load("2026-10-29", tmp_path, now=NOW, session=session)
-    assert session.calls == 0
+    assert session.calls == len(m.FILES)
     assert all(row["value"] is None for row in m.metrics(result).values())
     assert result["series"]["vn_cpi"]["status"] == "withheld"
 
@@ -492,3 +493,37 @@ def test_workbook_updates_keep_cpi_base_and_preliminary_labor(monkeypatch, tmp_p
         now.date().isoformat(), tmp_path, now=now + timedelta(days=1), session=Session(error=True)
     )
     assert m.metrics(replay)["vn_labor_force"] == metrics["vn_labor_force"]
+
+
+@pytest.mark.parametrize(
+    "last_modified,prepared,eligible",
+    [
+        ("Thu, 29 Oct 2026 02:00:00 GMT", "2026-10-29T01:59:00Z", True),
+        ("Fri, 30 Oct 2026 02:00:00 GMT", "2026-10-29T01:59:00Z", False),
+        ("Thu, 29 Oct 2026 02:00:00 GMT", "2026-10-30T01:59:00Z", False),
+    ],
+)
+def test_historical_requires_official_response_and_internal_date(
+    tmp_path, monkeypatch, last_modified, prepared, eligible
+):
+    monkeypatch.setattr(m.time, "sleep", lambda *_: None)
+
+    class DatedSession(Session):
+        def get(self, url, **kwargs):
+            response = Response(xml(prepared=prepared))
+            response.url = url
+            response.headers = {"Last-Modified": last_modified}
+            return response
+
+    day = (NOW - timedelta(days=1)).date()
+    result = m.fetch("cpi", tmp_path, day, NOW, DatedSession())
+    if not eligible:
+        assert result["status"] == "withheld"
+        assert not list(tmp_path.rglob("*.snapshot.json"))
+        return
+    assert result["status"] == "available"
+    assert result["source_basis"] == "dated_official_file_retrieved_later"
+    assert result["first_observed_at"] == NOW.isoformat()
+    assert result["content_timestamp"] == "2026-10-29T01:59:00+00:00"
+    assert all(row["period"] <= "2026-10" for row in result["series"]["PCPI_IX"]["observations"])
+    assert m.fetch("cpi", tmp_path, day, NOW, Session(error=True)) == result
