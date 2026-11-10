@@ -17,9 +17,11 @@ import time
 import unicodedata
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import requests
+from bs4 import BeautifulSoup
 
 from desktop.company_profile import plain
 from desktop.vietnam import digest, symbol, write_json
@@ -461,6 +463,128 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
         }
 
 
+# Published result pages of known transfers, selected independently of the
+# aggregate feed. The dated evidence is verified when it is retrieved.
+HISTORICAL_RESULTS = {
+    "VHM.VN": {
+        ("2026-04-07", 59001762): (
+            "2026-04-13",
+            "https://cafef.vn/du-lieu/vhm-2665267/vhm-tap-doan-vingroup-cong-ty-co-phan-da-chuyen-quyen-so-huu-59001762-cp.chn",
+        ),
+        ("2026-06-25", 15226260): (
+            "2026-06-26",
+            "https://cafef.vn/du-lieu/vhm-2917763/vhm-tap-doan-vingroupctcp-dang-ky-chuyen-quyen-so-huu-15226260-cp.chn",
+        ),
+        ("2026-08-05", 4806290): (
+            "2026-08-10",
+            "https://cafef.vn/du-lieu/vhm-2949586/vhm-tap-doan-vingroupctcp-da-chuyen-quyen-so-huu-4806290-cp.chn",
+        ),
+    }
+}
+
+
+def verify_result_page(response, url, ticker, published, shares):
+    response.raise_for_status()
+    if response.url != url or len(response.content) > 2_000_000:
+        raise ValueError("Unexpected CafeF disclosure URL or size")
+    soup = BeautifulSoup(response.text, "html.parser")
+    title = soup.select_one('meta[property="og:title"]')
+    stamp = soup.select_one("[id$=NewsContent1_lblNgay]")
+    body = soup.select_one("#newscontent .pa-hose")
+    origin = soup.select_one("#originSource a")
+    attachment = soup.select_one("#newscontent a.file")
+    rendered = title.get("content", "") if title else ""
+    day = datetime.fromisoformat(published).strftime("%d/%m/%Y")
+    if (
+        not rendered.startswith(symbol(ticker) + ":")
+        or not re.search(r"(?<![\d.])" + re.escape(f"{shares:,}".replace(",", ".")) + r"(?![\d.])", rendered)
+        or not stamp or day not in stamp.get_text(" ", strip=True)
+        or not body or "bao cao ket qua giao dich co phieu" not in folded(body.get_text(" ", strip=True))
+        or "vingroup" not in folded(body.get_text(" ", strip=True))
+        or "co lien quan" not in folded(body.get_text(" ", strip=True))
+        or not origin or origin.get_text(strip=True) != "HOSE"
+        or urlparse(origin.get("href", "")).hostname not in ("hsx.vn", "www.hsx.vn")
+        or not attachment or "ket qua giao dich" not in folded(attachment.get_text(" ", strip=True))
+    ):
+        raise ValueError("CafeF result evidence does not match ticker, actor, quantity or publication date")
+    pdf = urlparse(attachment.get("href", ""))
+    if pdf.scheme != "https" or pdf.hostname != "cafef1.mediacdn.vn" or not pdf.path.endswith(".pdf"):
+        raise ValueError("Invalid disclosure attachment link")
+    return {"url": url, "published": published, "attachment": pdf.geturl(),
+            "sha256": digest({"title": rendered, "date": stamp.get_text(" ", strip=True),
+                              "body": body.get_text(" ", strip=True), "attachment": pdf.geturl()})}
+
+
+def corroborate_historical(bundle, transfers, cache_dir, *, now=None, session=None):
+    ticker, asof = bundle["ticker"], bundle["asof"]
+    catalog = HISTORICAL_RESULTS.get(ticker)
+    now = (now or datetime.now(TZ)).astimezone(TZ)
+    if not catalog or bundle["status"] != "withheld" or transfers.get("status") != "available":
+        return bundle
+    if asof >= now.date().isoformat():
+        return bundle
+    start = (datetime.fromisoformat(asof).date() - timedelta(days=365)).isoformat()
+    if not any(start <= end <= asof for end, _ in catalog):
+        return bundle
+    session = session or requests.Session()
+    current = load(ticker, now.date().isoformat(), cache_dir, now=now, session=session)
+    if current["status"] != "available":
+        return bundle
+    rows, evidence, warnings = [], [], []
+    candidates = [
+        row for row in current["records"]
+        if (
+            start <= (row["reported_result_end"] or "") <= asof
+            or row["stage"] == "undated_result" and start <= (row["source_announcement_date"] or "") <= asof
+        )
+    ]
+    expected = {(end, shares) for end, shares in catalog if start <= end <= asof}
+    if {(row["reported_result_end"], row["reported_sell"]) for row in candidates} != expected or len(candidates) != len(expected):
+        warnings.append("Later-observed CafeF result rows do not all match the dated result catalog")
+    for row in candidates:
+        disclosure = catalog.get((row["reported_result_end"], row["reported_sell"]))
+        if not disclosure:
+            continue
+        published, url = disclosure
+        if published > asof:
+            continue
+        related = [
+            item for item in transfers["records"]
+            if row["plan_begin"] and row["plan_begin"] <= item["effective_date"] <= row["reported_result_end"]
+            and item["published"][:10] <= published
+        ]
+        if (
+            row["stage"] != "result_reported" or row["reported_buy"] != 0
+            or folded(row["party"]) != "tap doan vingroup - cong ty co phan"
+            or folded(row["note"]) != "chuyen quyen so huu"
+            or sum(item["shares"] for item in related) != row["reported_sell"]
+        ):
+            warnings.append("CafeF row and dated VSDC transfer amounts did not reconcile")
+            continue
+        try:
+            report = verify_result_page(session.get(url, timeout=(8, 20)), url, ticker, published, row["reported_sell"])
+        except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+            warnings.append("Dated result evidence: " + type(exc).__name__)
+            continue
+        evidence.append({**report, "observed_at": now.isoformat(), "vsdc_sources": [item["url"] for item in related]})
+        rows.append({
+            **row, "role": "Tổ chức có liên quan đến người nội bộ", "actor_scope": "related_party",
+            "mechanism": "ownership_transfer", "result_published": published, "result_url": url,
+            "source_announcement_date": None, "plan_begin": None, "plan_end": None,
+            "related_insider_role": None, "plan_window_valid": True,
+            "planned_buy": None, "planned_sell": None, "holding_before": None, "holding_after": None,
+            "quality_notes": ["Dated CafeF report attributed to HOSE; quantity matched to VSDC transfer notices. No exchange execution or price established."],
+        })
+    if not rows:
+        return {**bundle, "warnings": bundle["warnings"] + warnings}
+    return {
+        **bundle, "records": rows, "result_evidence": evidence, "retrieved_at": current["retrieved_at"],
+        "status": "partial" if warnings else "corroborated_results",
+        "warnings": bundle["warnings"] + warnings,
+        "scope": "Dated CafeF result pages attributed to HOSE and matched to VSDC ownership transfer notices. Totals cover only reconciled results in the later-observed CafeF feed; registered plans and full historical coverage remain unverified.",
+    }
+
+
 def metrics(bundle):
     asof = bundle["asof"]
     start = (datetime.strptime(asof, "%Y-%m-%d").date() - timedelta(days=365)).isoformat()
@@ -485,7 +609,8 @@ def metrics(bundle):
         and r["planned_buy"] is not None
         and r["plan_window_valid"]
     ]
-    result_totals_reliable = usable and not any(
+    corroborated = bundle["status"] == "corroborated_results"
+    result_totals_reliable = (usable or corroborated) and not any(
         (
             r["stage"] == "result_volume_missing"
             and r["reported_result_end"]
@@ -517,35 +642,30 @@ def metrics(bundle):
         ),
         sum(r["planned_buy"] for r in plans),
     ]
-    return {
-        key: {
-            "value": value
-            if usable
-            and (
-                key in ("vn_holder_records_announced_365d", "vn_holder_planned_buy_shares_active")
-                or result_totals_reliable
-            )
-            and (key != "vn_holder_planned_buy_shares_active" or plan_totals_reliable)
-            else None,
+    output = {}
+    for (key, definition), value in zip(METRICS.items(), values, strict=True):
+        if key == "vn_holder_records_announced_365d":
+            available = usable
+        elif key == "vn_holder_planned_buy_shares_active":
+            available = usable and plan_totals_reliable
+        else:
+            available = result_totals_reliable
+        scope = (
+            "; dated corroborated result subset from the later-observed feed; includes ownership transfers, separate from exchange trades"
+            if corroborated
+            else "; within retrieved source records only; announcement date is not result-publication date; undated results excluded without assigning them to another period; not a complete market census"
+        )
+        output[key] = {
+            "value": value if available else None,
             "unit": "records"
-            if key
-            in ("vn_holder_records_announced_365d", "vn_holder_unknown_mechanism_results_365d")
+            if key in ("vn_holder_records_announced_365d", "vn_holder_unknown_mechanism_results_365d")
             else "shares",
             "asof": asof,
-            "formula": definition
-            + "; within retrieved source records only; announcement date is not result-publication date; undated results excluded without assigning them to another period; not a complete market census",
+            "formula": definition + scope,
             "source": bundle["source_page"],
-            "status": "available"
-            if usable
-            and (
-                key in ("vn_holder_records_announced_365d", "vn_holder_planned_buy_shares_active")
-                or result_totals_reliable
-            )
-            and (key != "vn_holder_planned_buy_shares_active" or plan_totals_reliable)
-            else "missing",
+            "status": "available" if available else "missing",
         }
-        for (key, definition), value in zip(METRICS.items(), values, strict=True)
-    }
+    return output
 
 
 def summary(bundle):
@@ -591,6 +711,8 @@ def tool(bundle, ticker, asof):
         "reported_buy",
         "reported_sell",
         "reported_result_end",
+        "result_published",
+        "result_url",
         "holding_before",
         "holding_after",
         "note",

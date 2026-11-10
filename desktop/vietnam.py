@@ -29,7 +29,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 29
+VERSION = 30
 LOCK = threading.Lock()
 
 
@@ -848,6 +848,13 @@ def load(
                 transfers = load_transfers(ticker, asof, cache_dir)
             except (OSError, ValueError) as exc:
                 transfers = {"status": "unavailable", "records": [], "warnings": [type(exc).__name__]}
+            insider_dealings = insider_vietnam.corroborate_historical(
+                insider_dealings, transfers, cache_dir
+            )
+            sources.extend(
+                {"name": "Công bố kết quả giao dịch · CafeF dẫn HOSE", **row}
+                for row in insider_dealings.get("result_evidence", [])
+            )
             insider_dealings["vsdc_transfers"] = transfers
             warnings.extend(transfers["warnings"])
             sources.extend(

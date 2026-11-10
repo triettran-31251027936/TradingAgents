@@ -303,6 +303,8 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                     "; ".join(row.get("quality_notes", [])),
                 )
                 text += "| " + " | ".join(cell(v) for v in values) + " |\n"
+            for source in insider.get("result_evidence", []):
+                text += f"- [Công bố kết quả {cell(source['published'])}]({source['url']}) · CafeF dẫn HOSE, đối chiếu thông báo VSDC.\n"
             transfers = insider.get("vsdc_transfers") or {}
             if transfers:
                 text += "\n### Công bố chuyển quyền sở hữu của VSDC\n\n"

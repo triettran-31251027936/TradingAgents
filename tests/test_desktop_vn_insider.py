@@ -266,3 +266,63 @@ def test_original_insider_tool_routes_vn_and_restores_transport(tmp_path, monkey
         with pytest.raises(ValueError):
             fn("FPT.VN", "2026-09-20")
     assert router.VENDOR_METHODS["get_insider_transactions"].get("vietnam") is before
+
+
+def test_transfer_result_requires_its_own_publication_and_matching_notice(tmp_path, monkeypatch):
+    candidate = {
+        "party": "Tập đoàn Vingroup - Công ty Cổ phần",
+        "note": "chuyển quyền sở hữu",
+        "plan_begin": "2026-08-04",
+        "reported_result_end": "2026-08-05",
+        "reported_buy": 0,
+        "reported_sell": 4806290,
+        "stage": "result_reported",
+    }
+    _, url = v.HISTORICAL_RESULTS["VHM.VN"][("2026-08-05", 4806290)]
+    monkeypatch.setitem(v.HISTORICAL_RESULTS, "VHM.VN", {
+        ("2026-08-05", 4806290): ("2026-08-10", url),
+    })
+    monkeypatch.setattr(v, "load", lambda *a, **k: {
+        "status": "available", "records": [candidate], "retrieved_at": NOW.isoformat(),
+    })
+    source = {
+        "ticker": "VHM.VN", "asof": "2026-08-05", "status": "withheld", "records": [],
+        "warnings": [], "source_page": "https://cafef.vn/example",
+    }
+    evidence = {"status": "available", "records": [
+        {"effective_date": "2026-08-05", "published": "2026-08-06",
+         "shares": 4806290, "url": "https://vsdc.vn/ad/1"},
+    ]}
+
+    class DisclosureSession:
+        def get(self, location, **kw):
+            assert location == url
+            html = (
+                '<meta property="og:title" content="VHM: chuyển quyền sở hữu 4.806.290 cp">'
+                '<span id="NewsContent1_lblNgay">10/08/2026</span>'
+                '<div id="newscontent"><p class="pa-hose">Vingroup báo cáo kết quả giao dịch cổ phiếu '
+                'của tổ chức có liên quan</p><a class="file" href="https://cafef1.mediacdn.vn/one.pdf">'
+                'Bao cao ket qua giao dich</a></div><div id="originSource"><a href="https://hsx.vn">HOSE</a></div>'
+            )
+
+            class Response:
+                text = html
+                content = html.encode()
+                url = location
+
+                def raise_for_status(self):
+                    pass
+
+            return Response()
+
+    # The result end date alone is insufficient. The disclosure is not read early.
+    assert not v.corroborate_historical(source, evidence, tmp_path, now=NOW, session=object())["records"]
+    result = v.corroborate_historical(
+        {**source, "asof": "2026-08-10"}, evidence, tmp_path, now=NOW, session=DisclosureSession()
+    )
+    assert result["status"] == "corroborated_results"
+    record, = result["records"]
+    assert record["result_published"] == "2026-08-10" and record["mechanism"] == "ownership_transfer"
+    assert v.metrics(result)["vn_holder_dated_sell_shares_365d"]["value"] == 4806290
+    assert v.metrics(result)["vn_holder_planned_buy_shares_active"]["value"] is None
+    assert v.metrics(result)["vn_holder_records_announced_365d"]["value"] is None
