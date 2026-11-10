@@ -73,7 +73,7 @@ def reconcile_registered_shares(book, registry, profile, target, asof, preferred
             changes = [row for row in registry.get("registration_history", []) if row["date"] > end]
             event = registry.get("notice_registration_change")
             if (
-                not historical or not event or changes != [event]
+                not event or changes != [event]
                 or event["date"] != registry["latest_registration_date"]
                 or type(event.get("change")) is not int or not 0 < event["change"] < count
                 or event.get("reason", "").casefold() != "trả cổ tức bằng cổ phiếu"
@@ -82,6 +82,7 @@ def reconcile_registered_shares(book, registry, profile, target, asof, preferred
             issuer = registry.get("issuer_capital_change") or {}
             if (
                 not issuer
+                or not event["date"] <= registry["notice_published"][:10] <= asof
                 or not end < issuer["effective_date"] <= issuer["published"] <= asof
                 or issuer["before_shares"] != count - event["change"]
                 or issuer["after_shares"] != count
@@ -298,6 +299,7 @@ def extend(
     preferred = (
         number(latest_balance.get(preferred_fields[0])) if len(preferred_fields) == 1 else None
     )
+    same_session_close = bool(prices and prices[-1]["date"] == asof)
     if market and not aligned:
         reason = "Market cap / stated shares does not match the canonical completed close; do not mix price bases"
     if market and preferred != 0:
@@ -314,6 +316,8 @@ def extend(
         and price_basis.get("observed_close_vnd") == close
     ):
         registry_proof.update(verified=False, reason="No independently anchored close on analysis date")
+    if registry_proof.get("stock_dividend_bridge") and not same_session_close:
+        registry_proof.update(verified=False, reason="A completed close on the analysis date is required after the stock dividend")
     independent = bool(registry_proof["verified"] and close is not None and close > 0)
     if historical and not independent:
         reason = registry_proof["reason"]
@@ -360,6 +364,7 @@ def extend(
             "scope": "Observation time is not quote time. Matching a prior close does not prove lag or adjustment cause; no automatic market-cap rebasing or valuation unlock.",
         },
         marketcap_price_aligned=aligned,
+        canonical_close_matches_analysis_date=same_session_close,
         preferred_capital=preferred,
         preferred_field=preferred_fields[0] if len(preferred_fields) == 1 else None,
         status="derived_from_dated_registration_notice"

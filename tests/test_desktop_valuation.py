@@ -44,7 +44,7 @@ def independent_fixture():
     return book, raw, profile, registry
 
 
-def independent_calculate(book, raw, profile, registry, *, price_basis=None):
+def independent_calculate(book, raw, profile, registry, *, price_basis=None, price_date="2026-03-02"):
     result = {}
 
     def add(name, value, unit, formula, source, stamp):
@@ -52,7 +52,7 @@ def independent_calculate(book, raw, profile, registry, *, price_basis=None):
 
     proof = extend(
         book,
-        [{"date": "2026-03-02", "close": 10}],
+        [{"date": price_date, "close": 10}],
         raw,
         "2026-03-02",
         datetime(2026, 3, 2, 12, tzinfo=TZ),
@@ -490,6 +490,37 @@ def test_anchored_valuation_bridges_only_confirmed_stock_dividends(reason, publi
         assert proof["registered_share_reconciliation"]["stock_dividend_bridge"]["statement_share_basis"] == 100
     else:
         assert not proof["registered_share_reconciliation"]["verified"]
+
+
+def test_same_day_issuer_change_allows_canonical_valuation_with_lagging_broker():
+    book, raw, profile, registry = independent_fixture()
+    event = {"date": "2026-01-04", "change": 20, "reason": "Trả cổ tức bằng cổ phiếu"}
+    registry.update(
+        latest_registration_date=event["date"], registration_history=[event],
+        registered_shares=120, notice_registration_change=event,
+        notice_published="2026-01-05T09:00:00+07:00",
+        issuer_capital_change={
+            "effective_date": "2026-01-07", "published": "2026-01-10",
+            "before_shares": 100, "after_shares": 120, "par_value_vnd": 10,
+        },
+    )
+    profile["market"].update(numberOfSharesMktCap=120, issueShare=120, marketCap=1320)
+    result, proof = independent_calculate(book, raw, profile, registry)
+    assert proof["status"] == "derived_from_reconciled_share_snapshot"
+    assert result["market_cap_at_canonical_close"]["value"] == 1200
+    assert result["provider_pe_ttm_observed"]["value"] is None
+    previous, proof = independent_calculate(book, raw, profile, registry, price_date="2026-02-27")
+    assert previous["market_cap_at_canonical_close"]["value"] is None
+    assert not proof["canonical_close_matches_analysis_date"]
+
+
+def test_preclose_provider_observation_is_labelled_with_prior_completed_session():
+    book, raw, profile, _ = independent_fixture()
+    profile["market"].update(currentPrice=10, marketCap=1000)
+    result, proof = independent_calculate(book, raw, profile, {}, price_date="2026-02-27")
+    assert proof["marketcap_price_aligned"] and not proof["canonical_close_matches_analysis_date"]
+    assert result["shares_marketcap_observed"]["value"] == 100
+    assert "2026-02-27" in result["shares_marketcap_observed"]["source"]
 
 
 def test_provider_replay_requires_same_day_same_close_and_intact_saved_snapshot(tmp_path):

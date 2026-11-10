@@ -290,7 +290,17 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
         observed = datetime.fromisoformat(cached["observed_at"]).astimezone(TZ)
         same_day_vintage = historical and observed.date() <= target
         fresh = 0 <= (now - observed).total_seconds() < 21600
-        if same_day_vintage or (fresh and (not historical or cached.get("source_basis") == "dated_registration_notice")):
+        needs_issuer_check = (
+            not historical
+            and (ticker, cached.get("latest_registration_date")) in ISSUER_CAPITAL_NOTICES
+            and not cached.get("issuer_capital_change_checked")
+        )
+        if same_day_vintage and cached.get("notice_url"):
+            return {**cached, "source_basis": "dated_registration_notice", "analysis_date": asof}
+        if same_day_vintage or (
+            fresh and not needs_issuer_check
+            and (not historical or cached.get("source_basis") == "dated_registration_notice")
+        ):
             return cached
     session = session or requests.Session()
     try:
@@ -305,17 +315,31 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
             "sha256": hashlib.sha256(raw.encode()).hexdigest(),
             "scope": SCOPE,
         }
-        if historical:
-            proof, notice_raw = _dated_registration(soup, record, ticker, asof, session)
-            record.update(proof)
-            if event := proof["notice_registration_change"]:
-                issuer_change = _issuer_capital_change(ticker, event, asof, session)
-                if issuer_change:
-                    record["issuer_capital_change"] = issuer_change
-            write_json(
-                path.parent / ("raw_" + proof["notice_sha256"] + ".json"),
-                {"url": proof["notice_url"], "observed_at": now.isoformat(), "html": notice_raw},
-            )
+        if historical or (ticker, record["latest_registration_date"]) in ISSUER_CAPITAL_NOTICES:
+            try:
+                proof, notice_raw = _dated_registration(soup, record, ticker, asof, session)
+            except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+                if historical:
+                    raise
+                record["issuer_capital_change_error"] = type(exc).__name__
+            else:
+                if historical:
+                    record.update(proof)
+                else:
+                    record.update({
+                        key: proof[key] for key in (
+                            "notice_url", "notice_published", "notice_registration_change", "notice_sha256",
+                        )
+                    })
+                if event := proof["notice_registration_change"]:
+                    issuer_change = _issuer_capital_change(ticker, event, asof, session)
+                    if issuer_change:
+                        record["issuer_capital_change"] = issuer_change
+                write_json(
+                    path.parent / ("raw_" + proof["notice_sha256"] + ".json"),
+                    {"url": proof["notice_url"], "observed_at": now.isoformat(), "html": notice_raw},
+                )
+            record["issuer_capital_change_checked"] = True
         write_json(
             path.parent / ("raw_" + record["sha256"] + ".json"),
             {"url": url, "observed_at": now.isoformat(), "html": raw},
