@@ -29,7 +29,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 27
+VERSION = 28
 LOCK = threading.Lock()
 
 
@@ -284,6 +284,7 @@ def compute(
     company_profile=None,
     share_registry=None,
     price_source="Vietcap OHLCV",
+    price_basis=None,
 ):
     df = pd.DataFrame(rows).set_index("date")
     close = df["close"]
@@ -506,6 +507,7 @@ def compute(
         field,
         company_profile=company_profile,
         share_registry=share_registry,
+        price_basis=price_basis,
     )
     if valuation_proof is not None:
         valuation_proof.update(proof)
@@ -692,6 +694,15 @@ def load(
                     "status": registry["status"],
                 }
             )
+            if registry.get("notice_url"):
+                sources.append({
+                    "name": "Công bố số cổ phiếu đăng ký · VSDC",
+                    "url": registry["notice_url"],
+                    "published": registry["notice_published"],
+                    "retrieved_at": registry["observed_at"],
+                    "sha256": registry["notice_sha256"],
+                    "status": registry["status"],
+                })
             if registry["status"] != "available":
                 warnings.append(
                     "VSDC share registry: " + registry.get("reason", registry["status"])
@@ -707,6 +718,7 @@ def load(
             valuation_proof=valuation_proof,
             company_profile=company_profile,
             share_registry=registry,
+            price_basis=price_basis,
             price_source=(
                 "Vietcap OHLCV / CafeF session-price anchor"
                 if price_basis.get("status") == "anchored"

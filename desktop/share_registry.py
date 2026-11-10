@@ -26,11 +26,7 @@ def integer(text, suffix=""):
     return int(match[1].replace(".", ""))
 
 
-def parse(raw, ticker, asof):
-    ticker = symbol(ticker)
-    if len(raw.encode()) > 2_000_000:
-        raise ValueError("Oversized registry document")
-    soup = BeautifulSoup(raw, "html.parser")
+def _fields(soup):
     fields = {}
     for row in soup.select("div.row"):
         cells = row.find_all("div", recursive=False)
@@ -41,6 +37,15 @@ def parse(raw, ticker, asof):
         if key in fields:
             raise ValueError("Duplicate registry field")
         fields[key] = value
+    return fields
+
+
+def parse(raw, ticker, asof):
+    ticker = symbol(ticker)
+    if len(raw.encode()) > 2_000_000:
+        raise ValueError("Oversized registry document")
+    soup = BeautifulSoup(raw, "html.parser")
+    fields = _fields(soup)
     if fields.get("Mã chứng khoán:") != ticker or fields.get("Loại chứng khoán:") != "Cổ phiếu":
         raise ValueError("Mismatched ticker or non-stock registry instrument")
     isin = fields.get("Mã ISIN:", "")
@@ -175,6 +180,54 @@ def sanitized_page(raw):
     return soup
 
 
+def _dated_registration(soup, registry, ticker, asof, session):
+    """Confirm the latest registry balance was publicly disclosed by the cutoff."""
+    expected_day = registry["latest_registration_date"]
+    if expected_day > asof:
+        raise ValueError("Current registration changed after historical cutoff")
+    expected = re.compile(
+        re.escape(ticker) + r": Điều chỉnh thông tin số lượng (?:cổ phiếu|chứng khoán) đăng ký",
+        re.I,
+    )
+    links = [
+        row for row in soup.select("#divlistArticlesTCPH_TCDK ul.list-news > li")
+        if (link := row.select_one("h3 a[href]")) and expected.fullmatch(link.get_text(" ", strip=True))
+        and _notice_time(row.select_one(".time-news")).date().isoformat() == expected_day
+    ]
+    if len(links) != 1:
+        raise ValueError("No unique dated VSDC balance notice matching latest registration")
+    row = links[0]
+    href = row.select_one("h3 a[href]")["href"]
+    if not re.fullmatch(r"/(?:vi/)?ad/[1-9]\d{0,8}", href):
+        raise ValueError("Invalid registration notice link")
+    url = ROOT + href
+    notice = sanitized_page(response_text(session.get(url, timeout=(8, 20))))
+    title = notice.select_one("h3.title-category")
+    stamp = _notice_time(notice.select_one(".time-newstcph"))
+    if not title or not expected.fullmatch(title.get_text(" ", strip=True)) or stamp != _notice_time(
+        row.select_one(".time-news")
+    ):
+        raise ValueError("VSDC balance notice identity or date differs from issuer listing")
+    fields = _fields(notice)
+    if (
+        fields.get("Mã chứng khoán:") != ticker
+        or fields.get("Mã ISIN:") != registry["isin"]
+        or fields.get("Loại chứng khoán:") != "Cổ phiếu"
+        or integer(fields.get("Mệnh giá:", ""), "đồng") != registry["par_value_vnd"]
+        or integer(fields.get("Số lượng chứng khoán hiện tại:", ""), "Cổ phiếu") != registry["registered_shares"]
+    ):
+        raise ValueError("VSDC notice and registry disagree on identity or registered balance")
+    raw = str(notice)
+    return {
+        "source_basis": "dated_registration_notice",
+        "notice_url": url,
+        "notice_published": stamp.isoformat(),
+        "notice_sha256": hashlib.sha256(raw.encode()).hexdigest(),
+        "analysis_date": asof,
+        "scope": "Registered securities confirmed by a dated VSDC notice and reconciled current registration history. Retrieved later, with no later registration change in the observed history. Registered count alone does not establish outstanding shares or free float.",
+    }, raw
+
+
 def load(ticker, asof, cache_dir, *, now=None, session=None):
     ticker = symbol(ticker)
     now = (now or datetime.now(TZ)).astimezone(TZ)
@@ -184,28 +237,33 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
     cached = json.loads(path.read_text()) if path.is_file() and not path.is_symlink() else None
     if target > now.date():
         return {**empty, "status": "withheld", "reason": "Future registry date"}
-    if target < now.date():
-        if cached and datetime.fromisoformat(cached["observed_at"]).astimezone(TZ).date() <= target:
+    historical = target < now.date()
+    if cached:
+        observed = datetime.fromisoformat(cached["observed_at"]).astimezone(TZ)
+        same_day_vintage = historical and observed.date() <= target
+        fresh = 0 <= (now - observed).total_seconds() < 21600
+        if same_day_vintage or (fresh and (not historical or cached.get("source_basis") == "dated_registration_notice")):
             return cached
-        return {
-            **empty,
-            "status": "withheld",
-            "reason": "No registry snapshot observed by historical analysis date",
-        }
-    if cached and (now - datetime.fromisoformat(cached["observed_at"])).total_seconds() < 21600:
-        return cached
     session = session or requests.Session()
     try:
         url, raw = fetch_registry(ticker, session)
-        raw = str(sanitized_page(raw))
+        soup = sanitized_page(raw)
+        raw = str(soup)
         record = {
-            **parse(raw, ticker, asof),
+            **parse(raw, ticker, now.date().isoformat() if historical else asof),
             "status": "available",
             "source_url": url,
             "observed_at": now.isoformat(),
             "sha256": hashlib.sha256(raw.encode()).hexdigest(),
             "scope": SCOPE,
         }
+        if historical:
+            proof, notice_raw = _dated_registration(soup, record, ticker, asof, session)
+            record.update(proof)
+            write_json(
+                path.parent / ("raw_" + proof["notice_sha256"] + ".json"),
+                {"url": proof["notice_url"], "observed_at": now.isoformat(), "html": notice_raw},
+            )
         write_json(
             path.parent / ("raw_" + record["sha256"] + ".json"),
             {"url": url, "observed_at": now.isoformat(), "html": raw},
@@ -215,7 +273,8 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
     except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
         if cached:
             return {**cached, "status": "cached_source_error", "reason": type(exc).__name__}
-        return {**empty, "reason": type(exc).__name__}
+        return {**empty, "status": "withheld" if historical else "unavailable",
+                "reason": str(exc) if isinstance(exc, ValueError) else type(exc).__name__}
 
 
 TRANSFER_SCOPE = (

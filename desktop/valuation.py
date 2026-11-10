@@ -34,23 +34,31 @@ def reconcile_registered_shares(book, registry, profile, target, asof, preferred
             or not registry.get("history_reconciled")
         ):
             raise ValueError("No available reconciled VSDC registration snapshot")
-        if registry.get("ticker") != profile.get("ticker") or profile.get("status") != "available":
-            raise ValueError("Issuer identity mismatch")
-        for record in (registry, profile):
-            stamp = datetime.fromisoformat(record["observed_at"])
-            if stamp.tzinfo is None or stamp.astimezone(TZ).date().isoformat() != asof:
-                raise ValueError("Share observations are not from the analysis date")
+        historical = registry.get("source_basis") == "dated_registration_notice"
         count, par = registry["registered_shares"], registry["par_value_vnd"]
         if type(count) is not int or type(par) is not int or count <= 0 or par <= 0:
             raise ValueError("Invalid registry count/par")
-        market = profile.get("market", {})
-        if (
-            number(market.get("issueShare")) != count
-            or number(market.get("numberOfSharesMktCap")) != count
-        ):
-            raise ValueError(
-                "VSDC count differs from current broker issued/market-cap share counts"
+        if historical:
+            if registry.get("analysis_date") != asof or registry["notice_published"][:10] > asof:
+                raise ValueError("Dated registration evidence is outside the analysis cutoff")
+            proof.update(
+                source_basis="dated_registration_notice",
+                notice_url=registry["notice_url"], notice_published=registry["notice_published"],
+                scope="Dated VSDC balance notice and published charter reconciliation, retrieved later. Undisclosed post-statement buybacks and revisions are not ruled out.",
             )
+        else:
+            if registry.get("ticker") != profile.get("ticker") or profile.get("status") != "available":
+                raise ValueError("Issuer identity mismatch")
+            for record in (registry, profile):
+                stamp = datetime.fromisoformat(record["observed_at"])
+                if stamp.tzinfo is None or stamp.astimezone(TZ).date().isoformat() != asof:
+                    raise ValueError("Share observations are not from the analysis date")
+            market = profile.get("market", {})
+            if (
+                number(market.get("issueShare")) != count
+                or number(market.get("numberOfSharesMktCap")) != count
+            ):
+                raise ValueError("VSDC count differs from current broker issued/market-cap share counts")
         if not target:
             raise ValueError("No reconciled statement TTM end")
         rows = [r for r in book["balance"].get("quarters", []) if period(r) == target]
@@ -137,7 +145,7 @@ def parent_equity(book, target, field):
 
 
 def extend(
-    book, prices, raw, asof, observed_at, add, field, *, company_profile=None, share_registry=None
+    book, prices, raw, asof, observed_at, add, field, *, company_profile=None, share_registry=None, price_basis=None
 ):
     profit, reconciliation, window = ttm(
         book["income"], field(book, "income", "Attributable to parent company")
@@ -272,7 +280,16 @@ def extend(
     registry_proof = reconcile_registered_shares(
         book, share_registry, profile, end, asof, preferred
     )
+    historical = registry_proof.get("source_basis") == "dated_registration_notice"
+    if historical and registry_proof["verified"] and not (
+        price_basis and price_basis.get("status") == "anchored"
+        and price_basis.get("date") == asof
+        and price_basis.get("observed_close_vnd") == close
+    ):
+        registry_proof.update(verified=False, reason="No independently anchored close on analysis date")
     independent = bool(registry_proof["verified"] and close is not None and close > 0)
+    if historical and not independent:
+        reason = registry_proof["reason"]
     share_conflict = bool(
         share_registry
         and share_registry.get("status") == "available"
@@ -318,7 +335,9 @@ def extend(
         marketcap_price_aligned=aligned,
         preferred_capital=preferred,
         preferred_field=preferred_fields[0] if len(preferred_fields) == 1 else None,
-        status="derived_from_reconciled_share_snapshot"
+        status="derived_from_dated_registration_notice"
+        if independent and historical
+        else "derived_from_reconciled_share_snapshot"
         if independent and not provider_verified
         else "verified_current_inputs"
         if provider_verified
@@ -342,7 +361,7 @@ def extend(
             "Canonical Vietcap OHLCV close "
             + str(prices[-1]["date"])
             + "; "
-            + registry_proof["source_url"]
+            + (registry_proof.get("notice_url") or registry_proof["source_url"])
             + " observed "
             + registry_proof["observed_at"]
             + "; charter/zero treasury/zero preferred as reported "
@@ -378,7 +397,9 @@ def extend(
             if share_registry.get("status") == "available"
             else None,
             "shares",
-            "Current VSDC registered securities; NOT automatically outstanding shares or free float",
+            "Dated VSDC notice matched to registry; registered count alone does not establish shares outstanding or free float"
+            if share_registry.get("source_basis") == "dated_registration_notice"
+            else "Current VSDC registered securities; NOT automatically outstanding shares or free float",
             share_registry.get("source_url", "VSDC"),
             asof,
         )

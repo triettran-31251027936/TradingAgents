@@ -44,7 +44,7 @@ def independent_fixture():
     return book, raw, profile, registry
 
 
-def independent_calculate(book, raw, profile, registry):
+def independent_calculate(book, raw, profile, registry, *, price_basis=None):
     result = {}
 
     def add(name, value, unit, formula, source, stamp):
@@ -60,6 +60,7 @@ def independent_calculate(book, raw, profile, registry):
         field,
         company_profile=profile,
         share_registry=registry,
+        price_basis=price_basis,
     )
     return result, proof
 
@@ -440,3 +441,22 @@ def test_price_comparison_does_not_invent_provider_quote_time_or_unlock_mismatch
     assert comparison["provider_implied_price"] == 20
     assert comparison["canonical_close"] == 10
     assert result["pe_ttm"]["value"] is None and not proof["marketcap_price_aligned"]
+
+
+def test_dated_registration_uses_anchored_close_and_never_current_broker_ratios():
+    book, _, _, registry = independent_fixture()
+    registry.update(
+        source_basis="dated_registration_notice", analysis_date="2026-03-02",
+        notice_url="https://vsdc.vn/vi/ad/42", notice_published="2025-12-01T09:00:00+07:00",
+        observed_at="2026-03-04T09:00:00+07:00",
+    )
+    result, proof = independent_calculate(
+        book, {}, {}, registry,
+        price_basis={"status": "anchored", "date": "2026-03-02", "observed_close_vnd": 10},
+    )
+    assert proof["status"] == "derived_from_dated_registration_notice"
+    assert result["pe_ttm"]["value"] == 10 and result["pb"]["value"] == pytest.approx(1000 / 600)
+    assert result["provider_pe_ttm_observed"]["value"] is None
+    without_anchor, _ = independent_calculate(book, {}, {}, registry)
+    assert without_anchor["pe_ttm"]["value"] is None
+    assert without_anchor["registered_shares"]["value"] == 100

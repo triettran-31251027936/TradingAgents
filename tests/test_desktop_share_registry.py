@@ -122,7 +122,7 @@ def test_ambiguous_exact_search_does_not_choose_first(tmp_path):
 def test_current_page_cannot_be_backdated_without_observed_snapshot(tmp_path):
     session = Session()
     r = m.load("AAA", "2026-10-29", tmp_path, now=NOW, session=session)
-    assert r["status"] == "withheld" and not session.calls
+    assert r["status"] == "withheld" and len(session.calls) == 3
     m.load("AAA", "2026-10-30", tmp_path, now=NOW, session=session)
     session = Session(failed=True)
     r = m.load("AAA", "2026-10-30", tmp_path, now=NOW.replace(day=31), session=session)
@@ -220,3 +220,34 @@ def test_transfer_cutoff_uses_publication_and_effective_dates(tmp_path):
     offline = Session(failed=True)
     assert m.load_transfers("AAA", "2026-10-29", tmp_path, now=NOW, session=offline) == result
     assert not offline.calls
+
+
+def test_historical_registry_requires_dated_notice_matching_the_current_history(tmp_path):
+    title = "AAA: Điều chỉnh thông tin số lượng cổ phiếu đăng ký"
+    stamp = "Cập nhật ngày 01/09/2026 - 09:00:00"
+
+    class NoticeSession(Session):
+        def get(self, url, **kw):
+            self.calls.append(url)
+            if url.endswith("/ad/42"):
+                return Response(
+                    url,
+                    f'<h3 class="title-category">{title}</h3>'
+                    f'<div class="time-newstcph">{stamp}</div>'
+                    + page().split("<table>")[0].replace(
+                        "Tổng số chứng khoán đăng ký:", "Số lượng chứng khoán hiện tại:"
+                    ),
+                )
+            return Response(
+                url, page() + '<div id="divlistArticlesTCPH_TCDK"><ul class="list-news">'
+                + f'<li><h3><a href="/ad/42">{title}</a></h3><div class="time-news">{stamp}</div></li>'
+                + '</ul></div>',
+            )
+
+    result = m.load("AAA", "2026-10-29", tmp_path, now=NOW, session=NoticeSession())
+    assert result["status"] == "available" and result["source_basis"] == "dated_registration_notice"
+    assert result["registered_shares"] == 1200 and result["notice_url"].endswith("/42")
+    assert result["notice_published"].startswith("2026-09-01")
+    earlier = NoticeSession()
+    blocked = m.load("AAA", "2026-08-31", tmp_path, now=NOW, session=earlier)
+    assert blocked["status"] == "withheld" and not any(x.endswith("/42") for x in earlier.calls)

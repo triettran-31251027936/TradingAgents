@@ -280,7 +280,13 @@ function renderQuoteEvidence(proof){
  host.append(node('p','help','Hồ sơ được quan sát '+(comparison.provider_observed_at?new Date(comparison.provider_observed_at).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh'}):'chưa rõ')+'. Chưa có thời điểm cập nhật giá hồ sơ; ngày quan sát không phải ngày của mức giá.'));
  if(comparison.matching_prior_canonical_dates?.length)host.append(node('p','help','Giá suy ra trùng đóng cửa các phiên: '+comparison.matching_prior_canonical_dates.join(', ')+'. Trùng giá chưa chứng minh nguồn bị trễ hoặc có điều chỉnh.'));
  const shares=proof.registered_share_reconciliation;
- if(shares?.verified){host.append(node('p','help','Đã đối chiếu riêng '+formatNumber(shares.registered_shares)+' cổ phiếu đăng ký VSDC với số cổ phiếu hồ sơ hiện tại và vốn điều lệ kỳ '+shares.statement_period+'. Cổ phiếu quỹ/vốn ưu đãi được báo cáo bằng 0; không có thay đổi đăng ký sau kỳ báo cáo. Vốn hóa tính bằng giá đóng cửa chuẩn × cơ sở cổ phiếu đã đối chiếu. Chưa loại trừ mua lại chưa công bố sau kỳ báo cáo; số đăng ký tự nó không phải số lưu hành/free float.'));const a=node('a','source-link','Xem hồ sơ đăng ký VSDC');a.href=shares.source_url;host.append(a);}
+ if(shares?.verified){
+  const dated=shares.source_basis==='dated_registration_notice';
+  const basis=dated?'công bố VSDC ngày '+sourceTime(shares.notice_published):'số cổ phiếu hồ sơ hiện tại';
+  host.append(node('p','help','Đã đối chiếu '+formatNumber(shares.registered_shares)+' cổ phiếu đăng ký với '+basis+' và vốn điều lệ kỳ '+shares.statement_period+'. Cổ phiếu quỹ và vốn ưu đãi được báo cáo bằng 0. Vốn hóa tính bằng giá đóng cửa chuẩn × cơ sở cổ phiếu đã đối chiếu. Chưa loại trừ mua lại chưa công bố sau kỳ báo cáo.'));
+  const a=node('a','source-link',dated?'Xem công bố VSDC':'Xem hồ sơ đăng ký VSDC');
+  a.href=dated?shares.notice_url:shares.source_url;host.append(a);
+ }
  if(!proof.marketcap_price_aligned)host.append(node('p','warning-text',shares?.verified?'Giá/vốn hóa hồ sơ vẫn chưa khớp; không dùng P/E/P/B nguồn thay cho tỷ số tính riêng từ cơ sở cổ phiếu đã đối chiếu.':'Giá nguồn chưa khớp và chưa đủ đối chiếu cổ phiếu độc lập: giữ thiếu định giá liên quan.'));
 }
 

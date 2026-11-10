@@ -267,7 +267,13 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                 "registered_share_reconciliation"
             )
             if shares and shares.get("verified"):
-                text += f"Cơ sở cổ phiếu được đối chiếu riêng: {cell(shares.get('registered_shares'))} cổ phiếu đăng ký tại VSDC, mệnh giá {cell(shares.get('par_value_vnd'))} VND; khớp số lượng hồ sơ hiện tại và vốn điều lệ báo cáo kỳ {cell(shares.get('statement_period'))}. Cổ phiếu quỹ và vốn ưu đãi được báo cáo bằng 0; không có thay đổi đăng ký sau kỳ này. Vốn hóa tính riêng bằng giá đóng cửa chuẩn × cơ sở cổ phiếu đã đối chiếu, không dùng lại vốn hóa theo giá hồ sơ khác phiên. Chưa loại trừ mua lại chưa công bố sau kỳ báo cáo; số đăng ký tự nó không phải số lưu hành/free float. Nguồn: {cell(shares.get('source_url'))}.\n\n"
+                historical = shares.get("source_basis") == "dated_registration_notice"
+                share_source = shares.get("notice_url") if historical else shares.get("source_url")
+                basis = (
+                    f"khớp công bố VSDC ngày {cell(shares.get('notice_published'))} và vốn điều lệ"
+                    if historical else "khớp số lượng hồ sơ hiện tại và vốn điều lệ"
+                )
+                text += f"Cơ sở cổ phiếu được đối chiếu riêng: {cell(shares.get('registered_shares'))} cổ phiếu đăng ký tại VSDC, mệnh giá {cell(shares.get('par_value_vnd'))} VND; {basis} báo cáo kỳ {cell(shares.get('statement_period'))}. Cổ phiếu quỹ và vốn ưu đãi được báo cáo bằng 0; không có thay đổi đăng ký sau kỳ này trong hồ sơ đã kiểm tra. Vốn hóa tính bằng giá đóng cửa chuẩn × cơ sở cổ phiếu đã đối chiếu. Chưa loại trừ mua lại chưa công bố sau kỳ báo cáo. Nguồn: {cell(share_source)}.\n\n"
         insider = q.get("insider_dealings") or {}
         market_news = q.get("market_news") or {}
         if market_news:
