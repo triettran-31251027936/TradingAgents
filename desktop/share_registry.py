@@ -19,6 +19,39 @@ SEARCH = ROOT + "/search-suggest"
 SCOPE = "VSDC registered securities, NOT automatically shares outstanding or free float. Current observation, not a historical vintage archive."
 
 
+# Manually verified issuer disclosures keyed by VSDC registration event. The
+# published PDF must still match before a receipt can enter the data snapshot.
+ISSUER_CAPITAL_NOTICES = {
+    ("PVS", "2026-10-14"): {
+        "issuer": "PTSC",
+        "published": "2026-10-19",
+        "effective_date": "2026-10-16",
+        "before_shares": 511420099,
+        "after_shares": 613699317,
+        "par_value_vnd": 10000,
+        "url": "https://www.ptsc.com.vn/Data/Sites/1/media/codong/2026/1706%20TB-PTSC_.pdf",
+        "sha256": "fe06be0deceb266bbf76af1cba5d136e48900bc7c1fd02cc38900cc6ebc0adee",
+    },
+}
+
+
+def _issuer_capital_change(ticker, event, asof, session):
+    notice = ISSUER_CAPITAL_NOTICES.get((ticker, event["date"]))
+    if not notice or notice["published"] > asof:
+        return None
+    try:
+        response = session.get(notice["url"], timeout=(8, 12))
+        response.raise_for_status()
+        if (
+            urlparse(response.url).hostname != urlparse(notice["url"]).hostname
+            or hashlib.sha256(response.content).hexdigest() != notice["sha256"]
+        ):
+            return None
+    except requests.RequestException:
+        return None
+    return dict(notice)
+
+
 def integer(text, suffix=""):
     match = re.fullmatch(r"(-?(?:\d{1,3}(?:\.\d{3})+|\d+))\s*" + re.escape(suffix), text.strip())
     if not match:
@@ -192,7 +225,7 @@ def _dated_registration(soup, registry, ticker, asof, session):
     links = [
         row for row in soup.select("#divlistArticlesTCPH_TCDK ul.list-news > li")
         if (link := row.select_one("h3 a[href]")) and expected.fullmatch(link.get_text(" ", strip=True))
-        and _notice_time(row.select_one(".time-news")).date().isoformat() == expected_day
+        and expected_day <= _notice_time(row.select_one(".time-news")).date().isoformat() <= asof
     ]
     if len(links) != 1:
         raise ValueError("No unique dated VSDC balance notice matching latest registration")
@@ -217,11 +250,26 @@ def _dated_registration(soup, registry, ticker, asof, session):
         or integer(fields.get("Số lượng chứng khoán hiện tại:", ""), "Cổ phiếu") != registry["registered_shares"]
     ):
         raise ValueError("VSDC notice and registry disagree on identity or registered balance")
+    latest = [r for r in registry["registration_history"] if r["date"] == expected_day]
+    matched_change = None
+    if len(latest) == 1 and latest[0]["change"]:
+        event = latest[0]
+        direction = "tăng" if event["change"] > 0 else "giảm"
+        amount = fields.get(f"Số lượng chứng khoán {direction}:")
+        if (
+            amount
+            and integer(amount, "Cổ phiếu") == abs(event["change"])
+            and fields.get("Lý do:", "").casefold() == event["reason"].casefold()
+        ):
+            matched_change = event
+    if stamp.date().isoformat() != expected_day and matched_change is None:
+        raise ValueError("Delayed VSDC notice does not confirm the registration change")
     raw = str(notice)
     return {
         "source_basis": "dated_registration_notice",
         "notice_url": url,
         "notice_published": stamp.isoformat(),
+        "notice_registration_change": matched_change,
         "notice_sha256": hashlib.sha256(raw.encode()).hexdigest(),
         "analysis_date": asof,
         "scope": "Registered securities confirmed by a dated VSDC notice and reconciled current registration history. Retrieved later, with no later registration change in the observed history. Registered count alone does not establish outstanding shares or free float.",
@@ -260,6 +308,10 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
         if historical:
             proof, notice_raw = _dated_registration(soup, record, ticker, asof, session)
             record.update(proof)
+            if event := proof["notice_registration_change"]:
+                issuer_change = _issuer_capital_change(ticker, event, asof, session)
+                if issuer_change:
+                    record["issuer_capital_change"] = issuer_change
             write_json(
                 path.parent / ("raw_" + proof["notice_sha256"] + ".json"),
                 {"url": proof["notice_url"], "observed_at": now.isoformat(), "html": notice_raw},

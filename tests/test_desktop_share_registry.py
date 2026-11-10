@@ -222,9 +222,24 @@ def test_transfer_cutoff_uses_publication_and_effective_dates(tmp_path):
     assert not offline.calls
 
 
-def test_historical_registry_requires_dated_notice_matching_the_current_history(tmp_path):
+@pytest.mark.parametrize(("published_day", "delta", "expected"), [
+    ("01", None, "available"),
+    ("02", "200", "available"),
+    ("02", "201", "withheld"),
+])
+def test_historical_registry_requires_dated_notice_matching_the_current_history(
+    tmp_path, published_day, delta, expected
+):
     title = "AAA: Điều chỉnh thông tin số lượng cổ phiếu đăng ký"
-    stamp = "Cập nhật ngày 01/09/2026 - 09:00:00"
+    stamp = f"Cập nhật ngày {published_day}/09/2026 - 09:00:00"
+    detail = ""
+    if delta:
+        detail = (
+            '<div class="row"><div class="item-info">Số lượng chứng khoán tăng:</div>'
+            f'<div class="item-info">{delta} Cổ phiếu</div></div>'
+            '<div class="row"><div class="item-info">Lý do:</div>'
+            '<div class="item-info">Thay đổi</div></div>'
+        )
 
     class NoticeSession(Session):
         def get(self, url, **kw):
@@ -236,7 +251,7 @@ def test_historical_registry_requires_dated_notice_matching_the_current_history(
                     f'<div class="time-newstcph">{stamp}</div>'
                     + page().split("<table>")[0].replace(
                         "Tổng số chứng khoán đăng ký:", "Số lượng chứng khoán hiện tại:"
-                    ),
+                    ) + detail,
                 )
             return Response(
                 url, page() + '<div id="divlistArticlesTCPH_TCDK"><ul class="list-news">'
@@ -245,9 +260,19 @@ def test_historical_registry_requires_dated_notice_matching_the_current_history(
             )
 
     result = m.load("AAA", "2026-10-29", tmp_path, now=NOW, session=NoticeSession())
-    assert result["status"] == "available" and result["source_basis"] == "dated_registration_notice"
-    assert result["registered_shares"] == 1200 and result["notice_url"].endswith("/42")
-    assert result["notice_published"].startswith("2026-09-01")
+    assert result["status"] == expected
+    if expected == "available":
+        assert result["source_basis"] == "dated_registration_notice"
+        assert result["registered_shares"] == 1200 and result["notice_url"].endswith("/42")
+        assert result["notice_published"].startswith(f"2026-09-{published_day}")
+        if delta:
+            assert result["notice_registration_change"]["change"] == 200
+    else:
+        assert "does not confirm" in result["reason"]
+    if published_day == "02":
+        cutoff = NoticeSession()
+        withheld = m.load("AAA", "2026-09-01", tmp_path, now=NOW, session=cutoff)
+        assert withheld["status"] == "withheld" and not any(x.endswith("/42") for x in cutoff.calls)
     earlier = NoticeSession()
     blocked = m.load("AAA", "2026-08-31", tmp_path, now=NOW, session=earlier)
     assert blocked["status"] == "withheld" and not any(x.endswith("/42") for x in earlier.calls)

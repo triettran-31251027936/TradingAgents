@@ -462,6 +462,36 @@ def test_dated_registration_uses_anchored_close_and_never_current_broker_ratios(
     assert without_anchor["registered_shares"]["value"] == 100
 
 
+@pytest.mark.parametrize(("reason", "published", "expected"), [
+    ("Trả cổ tức bằng cổ phiếu", "2026-01-10", 1200),
+    ("Trả cổ tức bằng cổ phiếu", "2026-03-03", None),
+    ("Phát hành thu tiền", "2026-01-10", None),
+])
+def test_anchored_valuation_bridges_only_confirmed_stock_dividends(reason, published, expected):
+    book, _, _, registry = independent_fixture()
+    event = {"date": "2026-01-04", "change": 20, "reason": reason}
+    registry.update(
+        source_basis="dated_registration_notice", analysis_date="2026-03-02",
+        notice_url="https://vsdc.vn/vi/ad/42", notice_published="2026-01-05T09:00:00+07:00",
+        observed_at="2026-03-04T09:00:00+07:00", latest_registration_date=event["date"],
+        registration_history=[event], registered_shares=120, notice_registration_change=event,
+        issuer_capital_change={
+            "effective_date": "2026-01-07", "published": published, "before_shares": 100,
+            "after_shares": 120, "par_value_vnd": 10,
+        },
+    )
+    result, proof = independent_calculate(
+        book, {}, {}, registry,
+        price_basis={"status": "anchored", "date": "2026-03-02", "observed_close_vnd": 10},
+    )
+    assert result["market_cap_at_canonical_close"]["value"] == expected
+    if expected:
+        assert result["pe_ttm"]["value"] == 12 and result["pb"]["value"] == 2
+        assert proof["registered_share_reconciliation"]["stock_dividend_bridge"]["statement_share_basis"] == 100
+    else:
+        assert not proof["registered_share_reconciliation"]["verified"]
+
+
 def test_provider_replay_requires_same_day_same_close_and_intact_saved_snapshot(tmp_path):
     from desktop.valuation import replay_provider_observations
     from desktop.vietnam import digest, write_json

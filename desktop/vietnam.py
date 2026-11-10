@@ -807,6 +807,15 @@ def load(
                     "sha256": registry["notice_sha256"],
                     "status": registry["status"],
                 })
+            if issuer_change := registry.get("issuer_capital_change"):
+                sources.append({
+                    "name": "Công bố thay đổi vốn điều lệ · " + issuer_change["issuer"],
+                    "url": issuer_change["url"],
+                    "published": issuer_change["published"],
+                    "retrieved_at": registry["observed_at"],
+                    "sha256": issuer_change["sha256"],
+                    "status": registry["status"],
+                })
             if registry["status"] != "available":
                 warnings.append(
                     "VSDC share registry: " + registry.get("reason", registry["status"])

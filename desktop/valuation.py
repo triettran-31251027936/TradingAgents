@@ -18,10 +18,10 @@ TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 def reconcile_registered_shares(book, registry, profile, target, asof, preferred):
     """Reconcile a current registry count to broker counts and reported equity.
 
-    A registry count alone is not outstanding shares. This path requires no
-    subsequent registration change and explicitly zero reported treasury and
-    preferred capital. It still discloses the statement date: it cannot prove
-    that no unreported post-statement buyback occurred.
+    Match registered shares to published capital and zero reported treasury
+    and preferred capital. A sole later stock dividend requires a dated VSDC
+    notice and the corresponding issuer disclosure. The reported share basis
+    cannot establish whether unreported post-statement buybacks occurred.
     """
     proof = {
         "verified": False,
@@ -66,10 +66,37 @@ def reconcile_registered_shares(book, registry, profile, target, asof, preferred
             raise ValueError("Missing or duplicate statement period")
         month = target[1] * 3
         end = date(target[0], month, calendar.monthrange(target[0], month)[1]).isoformat()
-        if not registry["latest_registration_date"] <= end <= asof:
-            raise ValueError(
-                "Registration changed after the latest statement, or statement is in the future"
-            )
+        if end > asof:
+            raise ValueError("Statement period is in the future")
+        statement_count = count
+        if registry["latest_registration_date"] > end:
+            changes = [row for row in registry.get("registration_history", []) if row["date"] > end]
+            event = registry.get("notice_registration_change")
+            if (
+                not historical or not event or changes != [event]
+                or event["date"] != registry["latest_registration_date"]
+                or type(event.get("change")) is not int or not 0 < event["change"] < count
+                or event.get("reason", "").casefold() != "trả cổ tức bằng cổ phiếu"
+            ):
+                raise ValueError("Registration changed after the latest statement")
+            issuer = registry.get("issuer_capital_change") or {}
+            if (
+                not issuer
+                or not end < issuer["effective_date"] <= issuer["published"] <= asof
+                or issuer["before_shares"] != count - event["change"]
+                or issuer["after_shares"] != count
+                or issuer["par_value_vnd"] != par
+            ):
+                raise ValueError("No matching issuer capital change published by the analysis cutoff")
+            statement_count -= event["change"]
+            proof["stock_dividend_bridge"] = {
+                "registration_date": event["date"],
+                "statement_share_basis": statement_count,
+                "stock_dividend_shares": event["change"],
+                "post_dividend_share_basis": count,
+                "issuer_capital_change": issuer,
+                "scope": "Sole later VSDC registration matched to the stock-dividend notice and independently dated issuer capital change. Capitalized dividend increases share count, not total equity. P/B uses last reported parent equity without forecasting other changes.",
+            }
         published = date.fromisoformat(str(rows[0].get("publicDate", ""))[:10]).isoformat()
         if not end <= published <= asof:
             raise ValueError("Statement publication unavailable by analysis date")
@@ -92,7 +119,7 @@ def reconcile_registered_shares(book, registry, profile, target, asof, preferred
         charter = equity_field("paid-in capital", "charter capital")
         treasury = equity_field("treasury shares", "treasury stocks")
         capital, treasury_value = number(rows[0].get(charter)), number(rows[0].get(treasury))
-        expected = count * par
+        expected = statement_count * par
         tolerance = max(1, min(1_000_000, expected * 0.0001))
         proof.update(
             registered_shares=count,
@@ -110,7 +137,7 @@ def reconcile_registered_shares(book, registry, profile, target, asof, preferred
         )
         if capital is None or abs(capital - expected) > tolerance:
             raise ValueError(
-                "Registered shares * par does not reconcile to reported charter capital"
+                "Statement-period share basis * par does not reconcile to reported charter capital"
             )
         if treasury_value != 0 or preferred != 0:
             raise ValueError("Treasury/preferred capital is non-zero or unknown")
@@ -366,6 +393,7 @@ def extend(
             + registry_proof["observed_at"]
             + "; charter/zero treasury/zero preferred as reported "
             + registry_proof["statement_period"]
+            + ("; plus dated VSDC stock-dividend issuance" if registry_proof.get("stock_dividend_bridge") else "")
         )
         if independent
         else market_source
@@ -407,7 +435,11 @@ def extend(
         "market_cap_at_canonical_close",
         calculated_cap if (market_verified and not share_conflict) or independent else None,
         "VND",
-        "Canonical completed close * registration/charter-reconciled latest-reported ordinary-share basis; no post-statement registration change; zero reported treasury/preferred; subsequent undisclosed buybacks not ruled out"
+        (
+            "Canonical completed close * registration/charter-reconciled ordinary-share basis; "
+            + ("including the dated post-statement stock dividend; " if registry_proof.get("stock_dividend_bridge") else "no post-statement registration change; ")
+            + "zero reported treasury/preferred; subsequent undisclosed buybacks not ruled out"
+        )
         if independent
         else "Observed market cap, only when cap/shares matches canonical completed close and current issuer inputs or a statistics period matching published statements",
         allow=(market_verified and not share_conflict) or independent,
