@@ -94,6 +94,23 @@ def test_same_projection_later_refresh_does_not_rewrite_historical_receipt(tmp_p
     assert all(datetime.fromisoformat(s["retrieved_at"]) <= NOW for s in historical["sources"])
 
 
+def test_replay_selects_latest_observation_when_old_feed_version_returns(tmp_path):
+    date = "2026-10-31"
+    first = m.load(date, tmp_path, session=Session(), now=NOW)
+    changed = {
+        name: xml(name, [("Edited", "shared", "Sat, 31 Oct 2026 02:00:00 GMT")])
+        for name in m.FEEDS
+    }
+    m.load(date, tmp_path, session=Session(changed), now=NOW + timedelta(hours=1))
+    restored = {name: xml(name) + b" " for name in m.FEEDS}
+    observed = m.load(date, tmp_path, session=Session(restored), now=NOW + timedelta(hours=2))
+    no_network = Session(fail=True)
+    replayed = m.load(date, tmp_path, session=no_network, now=NOW + timedelta(days=1))
+    assert not no_network.calls and replayed["records"] == first["records"]
+    assert replayed["sources"] == observed["sources"]
+    assert [s["sha256"] for s in replayed["sources"]] != [s["sha256"] for s in first["sources"]]
+
+
 def test_cache_shared_across_symbols_and_limits_do_not_trigger_refetch(tmp_path):
     session = Session()
     m.load("2026-10-31", tmp_path, session=session, now=NOW, limit=1)

@@ -1,5 +1,6 @@
 """Public RSS evidence cannot become invented facts or historical knowledge."""
 
+import json
 from datetime import datetime, timedelta
 
 import pytest
@@ -142,6 +143,37 @@ def test_published_date_does_not_authorize_unobserved_historical_text(tmp_path):
     assert q["status"] == "withheld" and not q["records"] and not fail.calls
     replay = v.load("FPT", "2026-10-30", tmp_path, session=fail, now=NOW + timedelta(days=1))
     assert replay["records"] and not fail.calls
+
+
+def test_replay_preserves_receipts_when_old_topic_text_returns(tmp_path):
+    ticker, date = "FPT", "2026-10-30"
+    first = v.load(ticker, date, tmp_path, session=Session(), now=NOW)
+    changed = feed().replace(b"FPT discussion", b"Edited discussion")
+    v.load(ticker, date, tmp_path, session=Session(changed), now=NOW + timedelta(hours=1))
+    restored = v.load(
+        ticker, date, tmp_path, session=Session(feed() + b" "), now=NOW + timedelta(hours=2)
+    )
+    no_network = Session(error=True)
+    replayed = v.load(ticker, date, tmp_path, session=no_network, now=NOW + timedelta(days=1))
+    assert not no_network.calls and replayed["records"] == first["records"]
+    assert replayed["source_sha256"] == restored["source_sha256"] != first["source_sha256"]
+    assert replayed["first_observed_at"] == first["first_observed_at"]
+    assert replayed["retrieved_at"] == restored["retrieved_at"]
+
+
+def test_legacy_snapshot_overwritten_after_cutoff_is_withheld(tmp_path):
+    ticker, date = "FPT", "2026-10-30"
+    v.load(ticker, date, tmp_path, session=Session(), now=NOW)
+    folder = tmp_path / "vn-social" / ticker
+    for path in (folder / "observations").glob("*.json"):
+        path.unlink()
+    for path in folder.glob("*.json"):
+        row = json.loads(path.read_text())
+        row["retrieved_at"] = (NOW + timedelta(days=1)).isoformat()
+        path.write_text(json.dumps(row))
+    no_network = Session(error=True)
+    replayed = v.load(ticker, date, tmp_path, session=no_network, now=NOW + timedelta(days=2))
+    assert not no_network.calls and replayed["status"] == "withheld"
 
 
 def context(tmp_path):

@@ -7,22 +7,21 @@ may contain edited old posts, so historical use requires a locally observed vint
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urlparse
 from xml.etree import ElementTree
-from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup
 
-from desktop.vietnam import digest, symbol, write_json
+from desktop import rss_archive
+from desktop.vietnam import digest, symbol
 
-TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+TZ = rss_archive.TZ
 LOCK = threading.Lock()
 CONTEXT_LIMIT = 8
 EXCERPT_WORDS = 100
@@ -128,8 +127,10 @@ def parse_feed(raw, ticker, asof, now):
 
 def load(ticker, asof, cache_dir, *, session=None, now=None):
     name = symbol(ticker)
+    fixed_now = now is not None
     now = (now or datetime.now(TZ)).astimezone(TZ)
     target = datetime.fromisoformat(asof).date()
+    end = min(now, datetime.combine(target, time.max, TZ))
     base = {
         "ticker": name + ".VN",
         "asof": asof,
@@ -145,23 +146,16 @@ def load(ticker, asof, cache_dir, *, session=None, now=None):
     folder.mkdir(parents=True, exist_ok=True)
     with LOCK:
         path = folder / "latest.json"
-        cached = json.loads(path.read_text()) if path.is_file() and not path.is_symlink() else None
+        cached = rss_archive.read(path)
         error = None
         if target < now.date():
-            candidates = []
-            for p in folder.glob("*.snapshot.json"):
-                if p.is_symlink():
-                    continue
-                row = json.loads(p.read_text())
-                if datetime.fromisoformat(row["first_observed_at"]).astimezone(TZ).date() <= target:
-                    candidates.append(row)
-            if not candidates:
+            cached = rss_archive.replay(folder, end, cached)
+            if not cached:
                 return {
                     **base,
                     "status": "withheld",
                     "reason": "No observed RSS vintage by analysis date; current text may contain later edits",
                 }
-            cached = max(candidates, key=lambda r: r["first_observed_at"])
         elif (
             not cached
             or now.timestamp() - datetime.fromisoformat(cached["retrieved_at"]).timestamp() >= 1800
@@ -173,27 +167,26 @@ def load(ticker, asof, cache_dir, *, session=None, now=None):
             try:
                 response = session.get(base["source_url"], timeout=(8, 25))
                 response.raise_for_status()
+                retrieved = now if fixed_now else datetime.now(TZ)
+                if retrieved.date() != target:
+                    raise ValueError("RSS retrieval crossed the analysis date cutoff")
                 rows, issues, total = parse_feed(response.content, name, asof, now)
                 # Raw source hash, but persist only projected topic evidence: no creators,
                 # profile URLs, avatars, email/contact fields or tracking markup.
                 version = digest({"records": rows, "issues": issues, "source_item_count": total})
                 snapshot = folder / (version + ".snapshot.json")
-                old = (
-                    json.loads(snapshot.read_text())
-                    if snapshot.is_file() and not snapshot.is_symlink()
-                    else None
-                )
-                cached = {
+                old = rss_archive.read(snapshot)
+                observed = {
                     "records": rows,
                     "issues": issues,
                     "source_item_count": total,
                     "source_sha256": hashlib.sha256(response.content).hexdigest(),
                     "version": version,
-                    "retrieved_at": now.isoformat(),
-                    "first_observed_at": old["first_observed_at"] if old else now.isoformat(),
+                    "retrieved_at": retrieved.isoformat(),
+                    "first_observed_at": old["first_observed_at"] if old else retrieved.isoformat(),
                 }
-                write_json(snapshot, cached)
-                write_json(path, cached)
+                rss_archive.save(folder, snapshot, old, cached, observed)
+                cached = observed
             except (requests.RequestException, ValueError, ElementTree.ParseError) as exc:
                 if not cached:
                     return {
@@ -205,7 +198,6 @@ def load(ticker, asof, cache_dir, *, session=None, now=None):
                         ],
                     }
                 error = type(exc).__name__
-        end = min(now, datetime.combine(target, datetime.max.time(), TZ))
         start = target - timedelta(days=7)
         rows = [
             r

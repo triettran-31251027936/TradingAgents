@@ -7,21 +7,21 @@ reporting, not canonical macro facts or an archive of all market news.
 from __future__ import annotations
 
 import hashlib
-import json
 import threading
 from datetime import datetime, time, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urlparse
 from xml.etree import ElementTree
-from zoneinfo import ZoneInfo
 
 import requests
 
+from desktop import rss_archive
 from desktop.company_profile import plain
-from desktop.vietnam import digest, write_json
+from desktop.vietnam import digest
 
-TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+TZ = rss_archive.TZ
+stamp = rss_archive.stamp
 LOCK = threading.Lock()
 FEEDS = {
     "finance": "https://vneconomy.vn/tai-chinh.rss",
@@ -35,13 +35,6 @@ SCOPE = (
     "Original Yahoo/Alpha Vantage global-news tools remain separate and unchanged. "
     "RSS publication date does not prove when later edits became available."
 )
-
-
-def stamp(value):
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
-        raise ValueError("Observation requires timezone")
-    return dt.astimezone(TZ)
 
 
 def parse(raw, feed):
@@ -89,23 +82,10 @@ def parse(raw, feed):
     return records, issues, len(channel.findall("item"))
 
 
-def read(path):
-    if not path.is_file() or path.is_symlink():
-        return None
-    try:
-        cached = json.loads(path.read_text())
-        stamp(cached["retrieved_at"])
-        stamp(cached["first_observed_at"])
-        if not isinstance(cached["records"], list):
-            return None
-        return cached
-    except (OSError, ValueError, TypeError, KeyError):
-        return None
-
-
 def load(asof, cache_dir, *, look_back_days=7, limit=10, session=None, now=None):
     if type(limit) is not int or limit < 1 or type(look_back_days) is not int or look_back_days < 0:
         raise ValueError("Market news requires positive article limit and nonnegative lookback")
+    fixed_now = now is not None
     now = (now or datetime.now(TZ)).astimezone(TZ)
     target = datetime.fromisoformat(asof).date()
     end = min(now, datetime.combine(target, time.max, TZ))
@@ -133,40 +113,33 @@ def load(asof, cache_dir, *, look_back_days=7, limit=10, session=None, now=None)
         for feed, url in FEEDS.items():
             folder = Path(cache_dir) / "vn-market-news" / feed
             folder.mkdir(parents=True, exist_ok=True)
-            cached = read(folder / "latest.json")
+            cached = rss_archive.read(folder / "latest.json")
             error = None
             if target < now.date():
-                candidates = [
-                    row
-                    for p in folder.glob("*.snapshot.json")
-                    if (row := read(p))
-                    and stamp(row["first_observed_at"]) <= end
-                    and stamp(row["retrieved_at"]) <= end
-                ]
-                cached = max(candidates, key=lambda r: r["retrieved_at"], default=None)
+                cached = rss_archive.replay(folder, end, cached)
             elif not cached or now.timestamp() - stamp(cached["retrieved_at"]).timestamp() >= 900:
                 try:
                     response = session.get(url, timeout=(8, 25))
                     response.raise_for_status()
+                    retrieved = now if fixed_now else datetime.now(TZ)
+                    if retrieved.date() != target:
+                        raise ValueError("RSS retrieval crossed the analysis date cutoff")
                     records, issues, total = parse(response.content, feed)
                     version = digest(
                         {"records": records, "issues": issues, "source_item_count": total}
                     )
                     path = folder / (version + ".snapshot.json")
-                    old = read(path)
-                    cached = {
+                    old = rss_archive.read(path)
+                    observed = {
                         "records": records,
                         "issues": issues,
                         "source_item_count": total,
                         "source_sha256": hashlib.sha256(response.content).hexdigest(),
-                        "first_observed_at": old["first_observed_at"] if old else now.isoformat(),
-                        "retrieved_at": now.isoformat(),
+                        "first_observed_at": old["first_observed_at"] if old else retrieved.isoformat(),
+                        "retrieved_at": retrieved.isoformat(),
                     }
-                    # Historical receipts are immutable, even if the same
-                    # projected feed is retrieved again on a later day.
-                    if not old:
-                        write_json(path, cached)
-                    write_json(folder / "latest.json", cached)
+                    rss_archive.save(folder, path, old, cached, observed)
+                    cached = observed
                 except (requests.RequestException, ValueError, ElementTree.ParseError) as exc:
                     error = type(exc).__name__
             source = {
