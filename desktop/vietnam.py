@@ -29,7 +29,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 25
+VERSION = 26
 LOCK = threading.Lock()
 
 
@@ -773,7 +773,7 @@ def load(
             metrics.update(monetary["metrics"])
             domestic_macro["warnings"].extend(monetary["warnings"])
             sources.extend(
-                {"name": "DIV published NHNN briefing", **source} for source in monetary["sources"]
+                {"name": "Dated NHNN briefing evidence", **source} for source in monetary["sources"]
             )
             from desktop import fx_vietnam
 

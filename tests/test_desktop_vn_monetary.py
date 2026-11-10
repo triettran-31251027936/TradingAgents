@@ -99,7 +99,7 @@ def test_current_load_routes_real_tool_and_archives_source(tmp_path):
 def test_historical_run_cannot_fetch_current_article_as_old_vintage(tmp_path):
     session = Session()
     r = m.load("2026-10-29", tmp_path, now=NOW, session=session)
-    assert not session.calls
+    assert len(session.calls) == 2
     assert all(x["value"] is None for x in r["metrics"].values())
     m.load("2026-10-30", tmp_path, now=NOW, session=session)
     tomorrow = NOW.replace(day=31)
@@ -132,3 +132,36 @@ def test_cli_summary_does_not_duplicate_canonical_metric_tables(tmp_path):
     assert all("metrics" not in r for r in result["releases"])
     assert result["sources"] == data["sources"]
     assert data["metrics"]["vn_credit_stock"]["value"] is not None
+
+
+@pytest.mark.parametrize("difference", [False, True])
+def test_historical_briefing_requires_same_value_period_and_dated_witness(tmp_path, difference):
+    class PairedSession(Session):
+        def get(self, url, **kw):
+            self.calls.append(url)
+            if url == m.SEED:
+                return Response(url, html())
+            credit = CREDIT.replace("10,12%", "10,13%") if difference else CREDIT
+            return Response(
+                url,
+                f'<title>NHNN</title><p class="text-2"><span>Cập nhật: 07/10/2026</span></p>'
+                f'<div class="chiTietTinBai">{credit} {DEPOSIT}</div>',
+            )
+
+    session = PairedSession()
+    historical = m.load("2026-10-29", tmp_path, now=NOW, session=session)
+    assert len(session.calls) == 2
+    assert historical["source_basis"] == "cross_checked_dated_briefings"
+    yoy = historical["metrics"]["vn_credit_yoy"]
+    if difference:
+        assert yoy["value"] is None
+    else:
+        assert yoy["value"] == pytest.approx(0.1012)
+        assert yoy["lag_days"] == 29
+        assert yoy["corroborating_source"] == m.HISTORICAL_BRIEFINGS[0][3]
+        assert yoy["observed_at"].startswith("2026-10-30")
+    before_release = m.load("2026-10-07", tmp_path, now=NOW, session=Session(failed=True))
+    assert all(row["value"] is None for row in before_release["metrics"].values())
+    offline = Session(failed=True)
+    assert m.load("2026-10-29", tmp_path, now=NOW, session=offline) == historical
+    assert not offline.calls
