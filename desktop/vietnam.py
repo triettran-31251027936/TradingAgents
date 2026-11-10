@@ -29,7 +29,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 31
+VERSION = 32
 LOCK = threading.Lock()
 
 
@@ -514,6 +514,40 @@ def compute(
     return _safe(metrics), missing
 
 
+def saved_quantitative_snapshots(ticker, asof, folder, reports=None, *, start=None):
+    """Yield bounded, intact local snapshots for an exact date or short date range."""
+    start = start or asof
+    stock = symbol(ticker)
+    day = date.fromisoformat(start)
+    end = date.fromisoformat(asof)
+    paths = []
+    while day <= end:
+        paths.extend((folder, p) for p in folder.glob(f"{stock}_{day.isoformat()}_v*_news*.json"))
+        day += timedelta(days=1)
+    if reports is not None:
+        paths.extend((reports, p) for p in reports.glob(f"reports/{ticker}_*/quantitative.json"))
+        paths.extend((reports, p) for p in reports.glob(f"backtest/**/{ticker}_*/quantitative.json"))
+    for root, path in paths:
+        try:
+            if (
+                path.name.endswith("_raw.json") or path.is_symlink()
+                or (path.parent / ".publishing").exists()
+                or not path.resolve().is_relative_to(root.resolve())
+                or not 0 < path.stat().st_size <= 12 * 1024 * 1024
+            ):
+                continue
+            snapshot = json.loads(path.read_text())
+            if (
+                snapshot["ticker"] == ticker and start <= snapshot["analysis_date"] <= asof
+                and snapshot["fingerprint"] == digest({
+                    k: v for k, v in snapshot.items() if k not in ("sources", "fingerprint")
+                })
+            ):
+                yield snapshot
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue
+
+
 def load(
     ticker,
     asof,
@@ -863,6 +897,13 @@ def load(
                     "records": [],
                     "warnings": [type(exc).__name__],
                 }
+            observed = None
+            if insider_dealings["status"] == "withheld" and asof < datetime.now(TZ).date().isoformat():
+                observed = insider_vietnam.replay_observed(
+                    ticker + ".VN", asof, folder, Path(report_dir) if report_dir else None
+                )
+                if observed and observed["asof"] == asof:
+                    insider_dealings = observed
             from desktop.share_registry import load_transfers
 
             try:
@@ -872,6 +913,15 @@ def load(
             insider_dealings = insider_vietnam.corroborate_historical(
                 insider_dealings, transfers, cache_dir
             )
+            if observed and observed["asof"] != asof:
+                insider_dealings["registration_snapshot"] = insider_vietnam.registration_observation(observed)
+                sources.append({
+                    "name": "Quan sát đăng ký giao dịch đã lưu · CafeF",
+                    "url": observed["source_page"],
+                    "observed_at": observed["retrieved_at"],
+                    "sha256": observed["source_sha256"],
+                    "status": "stale",
+                })
             sources.extend(
                 {"name": "Công bố kết quả giao dịch · CafeF dẫn HOSE", **row}
                 for row in insider_dealings.get("result_evidence", [])

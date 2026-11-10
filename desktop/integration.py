@@ -311,6 +311,12 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                     "; ".join(row.get("quality_notes", [])),
                 )
                 text += "| " + " | ".join(cell(v) for v in values) + " |\n"
+            registration = insider.get("registration_snapshot") or {}
+            if registration:
+                text += (
+                    "\nSố liệu đăng ký dùng bản lưu ngày " + cell(registration["observed_at"])
+                    + ". Trạng thái nguồn chậm áp dụng cho hai chỉ tiêu đăng ký; ngày phân tích không đổi.\n"
+                )
             for source in insider.get("result_evidence", []):
                 text += f"- [Công bố kết quả {cell(source['published'])}]({source['url']}) · CafeF dẫn HOSE, đối chiếu thông báo VSDC.\n"
             transfers = insider.get("vsdc_transfers") or {}

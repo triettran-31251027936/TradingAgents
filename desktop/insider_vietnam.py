@@ -177,6 +177,18 @@ def mechanism(note):
     return "unspecified"
 
 
+def hide_future_result(record):
+    # The result's amount, date and note can all reveal later information.
+    fields = (
+        "reported_result_end", "reported_buy", "reported_sell", "holding_after",
+        "note", "result_published", "result_url",
+    )
+    redacted = {**record, **dict.fromkeys(fields), "mechanism": "unspecified"}
+    redacted["quality_notes"] = ["Source result date is after analysis cutoff; result fields withheld"]
+    redacted["id"] = digest({k: v for k, v in redacted.items() if k != "id"})
+    return redacted
+
+
 def normalize(rows, ticker, asof, observed_at):
     target = datetime.strptime(asof, "%Y-%m-%d").date()
     cutoff = min(observed_at, datetime.combine(target, datetime.max.time(), TZ))
@@ -272,7 +284,7 @@ def normalize(rows, ticker, asof, observed_at):
                 "transaction_price": None,
                 "quality_notes": notes,
             }
-            result.append(record)
+            result.append(hide_future_result(record) if stage == "future_result_withheld" else record)
         except (ValueError, TypeError, OverflowError, OSError, AttributeError) as exc:
             issues.append(type(exc).__name__ + ": " + str(exc))
     result.sort(
@@ -429,7 +441,10 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
                         ],
                     }
                 connection_error = type(exc).__name__
-        records, issues, future = normalize(cached["rows"], name, asof, now)
+        observed = datetime.fromisoformat(
+            cached["first_observed_at"] if target < now.date() else cached["retrieved_at"]
+        )
+        records, issues, future = normalize(cached["rows"], name, asof, min(now, observed))
         warnings = [*cached["pagination_issues"], *issues]
         if future:
             warnings.append(f"{future} rows announced after cutoff withheld")
@@ -447,7 +462,7 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
             if connection_error
             else "available"
         )
-        return {
+        result = {
             **base,
             "status": status,
             "records": records,
@@ -461,6 +476,15 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
             "page_hashes": cached["page_hashes"],
             "historical_scope": "Exact locally observed snapshot only; source announcement date is not proof of historical result availability",
         }
+        if target < now.date() and observed.astimezone(TZ).date() < target:
+            result["registration_snapshot"] = registration_observation({
+                **result,
+                "asof": observed.astimezone(TZ).date().isoformat(),
+                "retrieved_at": observed.isoformat(),
+                "source_snapshot_fingerprint": cached["version"],
+            })
+        return result
+
 
 
 # Published result pages of known transfers, selected independently of the
@@ -585,6 +609,65 @@ def corroborate_historical(bundle, transfers, cache_dir, *, now=None, session=No
     }
 
 
+REGISTRATION_METRICS = ("vn_holder_records_announced_365d", "vn_holder_planned_buy_shares_active")
+
+
+def replay_observed(ticker, asof, folder, reports=None):
+    from desktop.vietnam import saved_quantitative_snapshots
+
+    start = (datetime.fromisoformat(asof).date() - timedelta(days=7)).isoformat()
+    candidates = []
+    for snapshot in saved_quantitative_snapshots(ticker, asof, folder, reports, start=start):
+        saved = snapshot.get("insider_dealings") or {}
+        day = snapshot["analysis_date"]
+        try:
+            observed = datetime.fromisoformat(saved["retrieved_at"])
+            if (
+                observed.tzinfo is None or observed.astimezone(TZ).date().isoformat() != day
+                or saved["ticker"] != ticker or saved["asof"] != day or saved["status"] != "available"
+                or saved["source_url"] != URL or not re.fullmatch(r"[a-f0-9]{64}", saved["source_sha256"])
+                or saved["source_total"] != saved["retrieved_count"]
+                or not any(
+                    row["name"] == "CafeF shareholder dealings"
+                    and row.get("sha256") == saved["source_sha256"]
+                    and row.get("retrieved_at") == saved["retrieved_at"]
+                    for row in snapshot["sources"]
+                )
+            ):
+                continue
+            candidates.append((observed, snapshot["fingerprint"], saved))
+        except (ValueError, KeyError, TypeError):
+            continue
+    if not candidates:
+        return None
+    _, fingerprint, saved = max(candidates, key=lambda x: (x[0], x[1]))
+    records = [
+        hide_future_result(row) if row["stage"] == "future_result_withheld" else row
+        for row in saved["records"]
+    ]
+    return {
+        **saved, "records": records,
+        "source_snapshot_fingerprint": fingerprint,
+        "historical_scope": "Replayed local CafeF observations at the original retrieval time.",
+    }
+
+
+def registration_observation(saved):
+    """Preserve plan statistics at their real observation date."""
+    values = metrics(saved)
+    return {
+        "observed_at": saved["retrieved_at"],
+        "source_snapshot_fingerprint": saved["source_snapshot_fingerprint"],
+        "metrics": {
+            key: {
+                **values[key], "status": "stale" if values[key]["value"] is not None else "missing",
+                "formula": values[key]["formula"] + "; prior saved observation, no claim about later registrations",
+            }
+            for key in REGISTRATION_METRICS
+        },
+    }
+
+
 def metrics(bundle):
     asof = bundle["asof"]
     start = (datetime.strptime(asof, "%Y-%m-%d").date() - timedelta(days=365)).isoformat()
@@ -603,7 +686,7 @@ def metrics(bundle):
     plans = [
         r
         for r in rows
-        if r["stage"] == "registration_or_unresolved"
+        if r["stage"] in ("registration_or_unresolved", "future_result_withheld")
         and r["plan_end"]
         and r["plan_end"] >= asof
         and r["planned_buy"] is not None
@@ -619,7 +702,7 @@ def metrics(bundle):
         for r in rows
     )
     plan_totals_reliable = not any(
-        r["stage"] == "registration_or_unresolved"
+        r["stage"] in ("registration_or_unresolved", "future_result_withheld")
         and not r["plan_window_valid"]
         and max(r["plan_begin"] or "", r["plan_end"] or "") >= asof
         for r in rows
@@ -665,6 +748,9 @@ def metrics(bundle):
             "source": bundle["source_page"],
             "status": "available" if available else "missing",
         }
+    for key, entry in bundle.get("registration_snapshot", {}).get("metrics", {}).items():
+        if key in REGISTRATION_METRICS:
+            output[key] = entry
     return output
 
 

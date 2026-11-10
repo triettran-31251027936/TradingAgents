@@ -107,7 +107,11 @@ def test_undated_result_is_visible_but_not_in_dated_subtotal():
 
 def test_future_result_quantities_not_counted_as_execution():
     b = bundle([row(RealEndDate=ms("2026-11-05"))])
-    assert b["records"][0]["stage"] == "future_result_withheld"
+    record = b["records"][0]
+    assert record["stage"] == "future_result_withheld"
+    for key in ("reported_result_end", "reported_buy", "reported_sell", "holding_after", "note"):
+        assert record[key] is None
+    assert "2026-11-05" not in v.tool(b, "FPT.VN", b["asof"])
     assert v.metrics(b)["vn_holder_dated_buy_shares_365d"]["value"] == 0
 
 
@@ -326,3 +330,28 @@ def test_transfer_result_requires_its_own_publication_and_matching_notice(tmp_pa
     assert v.metrics(result)["vn_holder_dated_sell_shares_365d"]["value"] == 4806290
     assert v.metrics(result)["vn_holder_planned_buy_shares_active"]["value"] is None
     assert v.metrics(result)["vn_holder_records_announced_365d"]["value"] is None
+
+
+def test_saved_registration_retains_its_own_day_and_future_result_is_redacted(tmp_path):
+    from desktop.vietnam import digest, write_json
+
+    saved = bundle([row(RealEndDate=ms("2026-11-05"), PlanEndDate=ms("2026-11-10"))])
+    saved.update(retrieved_at=NOW.isoformat(), source_url=v.URL, source_sha256="a"*64,
+                 retrieved_count=1, source_total=1)
+    # Older app reports kept these outcome fields on future-result rows.
+    saved["records"][0].update(reported_buy=100, reported_result_end="2026-11-05")
+    snapshot = {
+        "analysis_date": saved["asof"], "ticker": "FPT.VN", "insider_dealings": saved,
+        "sources": [{"name": "CafeF shareholder dealings", "sha256": saved["source_sha256"],
+                     "retrieved_at": saved["retrieved_at"]}],
+    }
+    snapshot["fingerprint"] = digest({k: val for k, val in snapshot.items() if k != "sources"})
+    path = tmp_path / "FPT_2026-10-30_v31_news20.json"
+    write_json(path, snapshot)
+    observed = v.replay_observed("FPT.VN", "2026-11-03", tmp_path)
+    assert observed["records"][0]["reported_buy"] is None
+    registration = v.registration_observation(observed)["metrics"]["vn_holder_planned_buy_shares_active"]
+    assert registration["value"] == 100 and registration["status"] == "stale"
+    assert registration["asof"] == "2026-10-30"
+    assert v.replay_observed("FPT.VN", "2026-10-29", tmp_path) is None
+    assert v.replay_observed("FPT.VN", "2026-11-08", tmp_path) is None

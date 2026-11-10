@@ -460,30 +460,11 @@ PROVIDER_OBSERVATIONS = (
 
 def replay_provider_observations(ticker, asof, close, ttm_end, folder, reports=None):
     """Recover comparison-only fields from a verified same-day saved snapshot."""
-    import json
+    from desktop.vietnam import saved_quantitative_snapshots
 
-    from desktop.vietnam import digest
-
-    paths = list(folder.glob(f"{ticker.removesuffix('.VN')}_{asof}_v*_news*.json"))
-    if reports is not None:
-        paths.extend(reports.glob(f"reports/{ticker}_*/quantitative.json"))
-        paths.extend(reports.glob(f"backtest/**/{ticker}_*/quantitative.json"))
     candidates = []
-    for path in paths:
-        if (
-            path.name.endswith("_raw.json") or path.is_symlink()
-            or (path.parent / ".publishing").exists()
-            or path.resolve() != path.parent.resolve() / path.name
-        ):
-            continue
-        if reports is not None and path.name == "quantitative.json" and not path.resolve().is_relative_to(reports.resolve()):
-            continue
+    for snapshot in saved_quantitative_snapshots(ticker, asof, folder, reports):
         try:
-            if not 0 < path.stat().st_size <= 12 * 1024 * 1024:
-                continue
-            snapshot = json.loads(path.read_text())
-            if snapshot.get("ticker") != ticker or snapshot.get("analysis_date") != asof:
-                continue
             stamp = datetime.fromisoformat(snapshot["valuation_observed_at"])
             if stamp.tzinfo is None:
                 continue
@@ -514,12 +495,7 @@ def replay_provider_observations(ticker, asof, close, ttm_end, folder, reports=N
                 and metrics[key]["status"] == "available"
                 and number(metrics[key]["value"]) is not None
             }
-            if (
-                not records or "shares_marketcap_observed" not in records
-                or snapshot["fingerprint"] != digest({
-                    k: v for k, v in snapshot.items() if k not in ("sources", "fingerprint")
-                })
-            ):
+            if "shares_marketcap_observed" not in records:
                 continue
             shares = records["shares_marketcap_observed"]["value"]
             if shares <= 0 or not float(shares).is_integer():
