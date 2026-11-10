@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from desktop.market_calendar import HNX_LISTED_CLOSE, HNX_LISTED_SOURCE, HNX_LISTED_TRANSFER
 from desktop.market_calendar import SOURCES as CALENDAR_SOURCES
 from desktop.market_calendar import trading_day
 from desktop.vietnam import CHART, _request, load, symbol, write_json
@@ -24,7 +25,7 @@ INTERVALS = {"1m": ("ONE_MINUTE", 60, 300), "1d": ("ONE_DAY", 86400, 180)}
 def phase(now, exchange="HOSE"):
     now = now.astimezone(TZ)
     clock = now.time()
-    if not trading_day(now.date()):
+    if not trading_day(now.date(), exchange):
         return "closed"
     start = daytime(9, 15) if exchange == "HOSE" else daytime(9, 0)
     end = daytime(15, 0) if exchange == "UPCOM" else daytime(14, 30)
@@ -167,6 +168,17 @@ def board(ticker, interval, cache_dir, *, now=None, session=None, refresh=False)
                 prices_only=True,
                 price_history_limit=60,
             )
+            exchange = daily.get("exchange")
+            rows = [
+                row for row in rows
+                if trading_day(datetime.fromtimestamp(row["time"], TZ).date(), exchange)
+            ]
+            trades = [
+                row for row in trades
+                if trading_day(datetime.fromtimestamp(row["time"], TZ).date(), exchange)
+            ]
+            if not rows:
+                raise ValueError("Không có nến thuộc phiên giao dịch hợp lệ.")
             quote = (
                 trades[0]
                 if trades
@@ -179,7 +191,6 @@ def board(ticker, interval, cache_dir, *, now=None, session=None, refresh=False)
                 (r for r in reversed(daily["prices"]) if r["date"] < quote_date), None
             )
             age = max(0, now.timestamp() - quote["time"])
-            exchange = daily.get("exchange")
             current_phase = phase(now, exchange)
             data_status = (
                 "delayed"
@@ -194,7 +205,10 @@ def board(ticker, interval, cache_dir, *, now=None, session=None, refresh=False)
                 "currency": "VND",
                 "interval": interval,
                 "candles": rows,
-                "completed_sessions": [r["date"] for r in daily["prices"]],
+                "completed_sessions": [
+                    r["date"] for r in daily["prices"]
+                    if trading_day(datetime.fromisoformat(r["date"]).date(), exchange)
+                ],
                 "trades": trades,
                 "quote": quote,
                 "reference_close": previous["close"] if previous else None,
@@ -219,6 +233,12 @@ def board(ticker, interval, cache_dir, *, now=None, session=None, refresh=False)
                     "Giá trên bảng là dữ liệu báo về, không phải báo giá khớp lệnh được bảo đảm.",
                 ],
             }
+            if exchange == "HNX":
+                result["calendar"]["hnx_listed_transition"] = {
+                    "closed_from": HNX_LISTED_CLOSE.isoformat(),
+                    "scheduled_hose_start": HNX_LISTED_TRANSFER.isoformat(),
+                    "source_url": HNX_LISTED_SOURCE,
+                }
             write_json(path, result)
             return result
         except (requests.RequestException, ValueError, RuntimeError) as exc:

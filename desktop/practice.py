@@ -17,7 +17,7 @@ import backtrader as bt
 import pandas as pd
 
 from desktop.market_board import phase
-from desktop.market_calendar import trading_day
+from desktop.market_calendar import retired_venue, trading_day
 from desktop.paper import Store, VNCommission, _utc, validate_order
 from desktop.vietnam import digest
 
@@ -83,7 +83,7 @@ def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH):
         if (
             phase(
                 end.replace(second=0) - pd.Timedelta(seconds=1),
-                exchanges.get(order.data._name, "HOSE"),
+                order.info.get("exchange") or exchanges.get(order.data._name, "HOSE"),
             )
             != "continuous"
         ):
@@ -121,7 +121,7 @@ def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH):
                     exectype=bt.Order.Limit,
                     valid=expiry,
                 )
-                placed.addinfo(paper_id=order["id"])
+                placed.addinfo(paper_id=order["id"], exchange=order["exchange"])
                 self.sent.add(order["id"])
                 eligible[order["id"]] = end.date().isoformat()
 
@@ -171,11 +171,13 @@ def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH):
         day = eligible.get(order["id"])
         close = daytime(15) if order["exchange"] == "UPCOM" else daytime(14, 45)
         if (
-            day
-            and (
-                now.date().isoformat() > day
-                or now.date().isoformat() == day
-                and now.time() >= close
+            (
+                retired_venue(now.date(), order["exchange"])
+                or day
+                and (
+                    now.date().isoformat() > day
+                    or now.date().isoformat() == day and now.time() >= close
+                )
             )
             and row["filled_quantity"] < order["quantity"]
             and row["state"] not in ("MARGIN", "REJECTED", "CANCELED")
@@ -226,6 +228,8 @@ class PracticeStore(Store):
             )
         if exchange not in ("HOSE", "HNX", "UPCOM"):
             raise ValueError("Chưa xác minh được sàn Việt Nam.")
+        if retired_venue(date.fromisoformat(today), exchange):
+            raise ValueError("Cổ phiếu niêm yết HNX đã dừng giao dịch trên sàn cũ. Cần xác minh sàn mới.")
         with nullcontext(db) if db is not None else self.connect() as db:
             if not db.in_transaction:
                 db.execute("BEGIN IMMEDIATE")
@@ -281,7 +285,10 @@ class PracticeStore(Store):
 
     def approve(self, order_id, preview_hash, approval, *, now=None):
         preview = self.preview(order_id)
-        if preview["order"]["analysis_date"] != datetime.now(TZ).date().isoformat():
+        today = datetime.now(TZ).date()
+        if retired_venue(today, preview["order"]["exchange"]):
+            raise ValueError("Lệnh gắn với sàn HNX cũ. Cần đề xuất mới trên sàn đã xác minh.")
+        if preview["order"]["analysis_date"] != today.isoformat():
             raise ValueError("Đề xuất đã sang ngày mới; cần PM phân tích và tạo đề xuất mới.")
         result = super().approve(order_id, preview_hash, approval, now=now)
         result["message"] = (
@@ -307,7 +314,7 @@ class PracticeStore(Store):
                 day
                 for market in boards.values() if market.get("status") != "unavailable"
                 for day in market.get("completed_sessions", [])
-                if trading_day(date.fromisoformat(day))
+                if trading_day(date.fromisoformat(day), market.get("exchange"))
                 and (day < today or day == today and now.time() >= daytime(15))
             }
             # New observed sessions may settle a position even without a new quote.
@@ -384,7 +391,10 @@ class PracticeStore(Store):
                     continue
                 rows = frames.get(order["ticker"], [])
                 approved = local(order["approved_at"])
-                relevant = [r for r in rows if r["time"] + 60 >= approved.timestamp()]
+                relevant = [
+                    r for r in rows if r["time"] + 60 >= approved.timestamp()
+                    and trading_day(datetime.fromtimestamp(r["time"], TZ).date(), order["exchange"])
+                ]
                 if relevant:
                     cursor = approved.replace(second=0, microsecond=0)
                     # A bounded endpoint must not silently skip an offline trading session.
@@ -392,7 +402,7 @@ class PracticeStore(Store):
                         endpoint = datetime.fromtimestamp(row["time"], TZ)
                         missing = 0
                         while cursor < endpoint:
-                            if not trading_day(cursor.date()):
+                            if not trading_day(cursor.date(), order["exchange"]):
                                 cursor = datetime.combine(
                                     cursor.date() + timedelta(days=1), daytime.min, TZ
                                 )

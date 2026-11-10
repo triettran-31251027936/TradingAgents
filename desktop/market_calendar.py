@@ -1,4 +1,10 @@
-"""Published common market closures used by the Vietnam paper account."""
+"""Published market closures and listed-equity venue changes."""
+
+from datetime import date
+
+HNX_LISTED_CLOSE = date(2026, 12, 24)
+HNX_LISTED_TRANSFER = date(2026, 12, 28)
+HNX_LISTED_SOURCE = "https://vnx.vn/vi/thong-tin-tu-sgdck/VNX_QLHD/10005421"
 
 HOLIDAYS = {
     2025: frozenset({
@@ -21,5 +27,13 @@ SOURCES = {
 }
 
 
-def trading_day(day):
-    return day.weekday() < 5 and (day.month, day.day) not in HOLIDAYS.get(day.year, ())
+def retired_venue(day, exchange):
+    return exchange == "HNX" and day >= HNX_LISTED_CLOSE
+
+
+def trading_day(day, exchange=None):
+    return (
+        day.weekday() < 5
+        and (day.month, day.day) not in HOLIDAYS.get(day.year, ())
+        and not retired_venue(day, exchange)
+    )

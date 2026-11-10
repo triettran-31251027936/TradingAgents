@@ -284,6 +284,62 @@ def test_settlement_ignores_reported_session_on_published_market_holiday(tmp_pat
     assert settled["positions"]["BSR.VN"]["available_quantity"] == 100
 
 
+def test_published_hnx_transition_closes_only_the_old_listed_venue():
+    for day in (24, 25):
+        stamp = datetime(2026, 12, day, 10, tzinfo=TZ)
+        assert phase(stamp, "HNX") == "closed"
+        assert phase(stamp, "HOSE") == phase(stamp, "UPCOM") == "continuous"
+    first_hose = datetime(2026, 12, 28, 9, 16, tzinfo=TZ)
+    assert phase(first_hose, "HNX") == "closed"
+    assert phase(first_hose, "HOSE") == "continuous"
+
+
+def test_hnx_fill_replays_original_hours_after_market_board_moves_to_hose():
+    old_session = datetime(2026, 12, 23, 9, tzinfo=TZ)
+    new_session = datetime(2026, 12, 28, 9, 15, tzinfo=TZ)
+    rows = [
+        {**bar("09:15:00"), "time": int(value.timestamp())}
+        for value in (old_session, old_session.replace(minute=1), new_session)
+    ]
+    hnx_order = {
+        **order(), "ticker": "PVS.VN", "exchange": "HNX",
+        "approved_at": old_session.isoformat(),
+    }
+    result = run_broker(
+        [hnx_order], {"PVS.VN": rows}, new_session.replace(minute=16), {"PVS.VN": "HOSE"}
+    )
+    fill = result["orders"][hnx_order["id"]]
+    assert fill["state"] == "FILLED" and fill["fill_date"] == "2026-12-23"
+
+
+def test_unmatched_hnx_order_expires_and_requires_new_hose_order():
+    after_last_hnx = datetime(2026, 12, 23, 14, 46, tzinfo=TZ)
+    first_hose = datetime(2026, 12, 28, 9, 15, tzinfo=TZ)
+    rows = [
+        {**bar("09:15:00"), "time": int(first_hose.replace(minute=m).timestamp())}
+        for m in (15, 16)
+    ]
+    old_order = {
+        **order(), "ticker": "PVS.VN", "exchange": "HNX",
+        "approved_at": after_last_hnx.isoformat(),
+    }
+    new_order = {
+        **old_order, "id": "new-approval", "exchange": "HOSE",
+        "approved_at": first_hose.isoformat(),
+    }
+    result = run_broker(
+        [old_order, new_order],
+        {"PVS.VN": rows},
+        first_hose.replace(minute=17),
+        {"PVS.VN": "HOSE"},
+    )
+    assert result["orders"][old_order["id"]]["state"] == "EXPIRED"
+    assert result["orders"][old_order["id"]]["filled_quantity"] == 0
+    assert result["orders"][new_order["id"]]["state"] == "FILLED"
+    assert result["orders"][new_order["id"]]["fill_date"] == "2026-12-28"
+    assert result["positions"]["PVS.VN"]["quantity"] == 100
+
+
 def test_market_hours():
     assert phase(moment("11:45:00")) == "lunch"
     assert phase(moment("14:35:00")) == "auction"
@@ -486,3 +542,36 @@ def test_market_change_uses_quote_session_before_weekend_or_preopen(
     else:
         assert result["reference_date"] is None
         assert result["change"] is None and result["change_fraction"] is None
+
+
+def test_board_with_old_hnx_identity_does_not_show_cutover_candles(tmp_path, monkeypatch):
+    from desktop import market_board
+
+    before = datetime(2026, 12, 23, 14, 28, tzinfo=TZ)
+    after = datetime(2026, 12, 28, 10, tzinfo=TZ)
+    times = [int(value.timestamp()) for value in (before, after)]
+    raw = {
+        "t": times,
+        "o": [25000, 26000],
+        "h": [25100, 26100],
+        "l": [24900, 25900],
+        "c": [25000, 26000],
+        "v": [10000, 10000],
+    }
+
+    def request(session, url, payload):
+        if url == market_board.CHART:
+            return raw
+        return {"data": [{"id": "cutover", "truncTime": times[-1], "matchPrice": 26000, "matchVol": 100}]}
+
+    monkeypatch.setattr(market_board, "_request", request)
+    monkeypatch.setattr(
+        market_board, "load", lambda *a, **kw: {
+            "exchange": "HNX", "prices": [{"date": "2026-12-23", "close": 25000}],
+        }
+    )
+    data = market_board.board("PVS.VN", "1m", tmp_path, now=after)
+    assert data["status"] == "closed" and not data["trades"]
+    assert data["quote"]["price"] == 25000
+    assert [row["time"] for row in data["candles"]] == [times[0]]
+    assert data["calendar"]["hnx_listed_transition"]["scheduled_hose_start"] == "2026-12-28"
