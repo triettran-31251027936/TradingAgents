@@ -96,11 +96,52 @@ def test_public_feed_cache_and_failed_refresh_retain_timestamp(tmp_path):
     assert failed["currencies"] == first["currencies"]
 
 
-def test_current_quote_not_used_for_unobserved_history(tmp_path):
-    session = Session()
-    result = f.load("2026-10-29", tmp_path, now=NOW, session=session)
-    assert session.calls == 0 and result["status"] == "withheld"
-    assert all(value["value"] is None for value in f.metrics(result, "2026-10-29").values())
+def archived_data(day):
+    return json.dumps({
+        "Count": 2,
+        "Date": day + "T00:00:00",
+        "UpdatedDate": day + "T23:00:00+07:00",
+        "Data": [{
+            "currencyCode": "USD", "currencyName": "US DOLLAR",
+            "cash": "25300.00", "transfer": "25330.00", "sell": "25710.00",
+        }, {
+            "currencyCode": "DKK", "currencyName": "DANISH KRONE",
+            "cash": "0.00", "transfer": "3742.79", "sell": "3886.09",
+        }],
+    }).encode()
+
+
+class ArchiveSession(Session):
+    def get(self, url, *, params, **kwargs):
+        assert url == f.ARCHIVE_URL
+        assert params == {"date": "2026-10-29"}
+        response = super().get(url, **kwargs)
+        response.url = url
+        return response
+
+
+def test_archive_rejects_quotes_for_wrong_day(tmp_path):
+    for raw in (xml(), archived_data("2026-10-30"), archived_data("2026-10-28")):
+        session = ArchiveSession(raw=raw)
+        result = f.load("2026-10-29", tmp_path, now=NOW, session=session)
+        assert session.calls == 1 and result["status"] == "withheld"
+        assert all(v["value"] is None for v in f.metrics(result, "2026-10-29").values())
+
+
+def test_exact_day_archive_preserves_date_source_and_cache(tmp_path):
+    session = ArchiveSession(raw=archived_data("2026-10-29"))
+    archived = f.load("2026-10-29", tmp_path, now=NOW, session=session)
+    assert session.calls == 1
+    assert archived["status"] == "available" and archived["source_basis"] == "dated_bank_archive"
+    assert archived["quote_time"] == "2026-10-29T23:00:00+07:00"
+    assert archived["currencies"]["DKK"]["cash_buy"] is None
+    metric = f.metrics(archived, "2026-10-29")["vn_fx_usd_sell"]
+    assert metric["value"] == 25710 and metric["source"] == f.ARCHIVE_URL
+    tool = json.loads(f.tool(archived, "vn_fx:USD"))
+    assert tool["source_url"] == f.ARCHIVE_URL and tool["quotes"]["transfer_buy"] == 25330
+    offline = ArchiveSession(error=True)
+    assert f.load("2026-10-29", tmp_path, now=NOW, session=offline) == archived
+    assert offline.calls == 0
 
 
 def test_archive_can_replay_observed_quote_without_new_download(tmp_path):

@@ -29,7 +29,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 24
+VERSION = 25
 LOCK = threading.Lock()
 
 
@@ -793,7 +793,7 @@ def load(
             sources.append(
                 {
                     "name": "Vietcombank reference FX",
-                    "url": fx_vietnam.URL,
+                    "url": bank_fx.get("source_url", fx_vietnam.URL),
                     "retrieved_at": bank_fx.get("retrieved_at", "unavailable"),
                     "sha256": bank_fx.get("sha256"),
                     "status": bank_fx["status"],
