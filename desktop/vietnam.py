@@ -29,7 +29,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 30
+VERSION = 31
 LOCK = threading.Lock()
 
 
@@ -525,6 +525,7 @@ def load(
     news_article_limit=20,
     global_news_article_limit=10,
     global_news_lookback_days=7,
+    report_dir=None,
 ):
     ticker = symbol(ticker)
     date.fromisoformat(asof)
@@ -725,6 +726,26 @@ def load(
                 else "Vietcap OHLCV"
             ),
         )
+        if (
+            price_basis.get("status") == "anchored" and price_basis.get("date") == asof
+        ):
+            from desktop.valuation import replay_provider_observations
+
+            saved = replay_provider_observations(
+                ticker + ".VN", asof, prices[-1]["close"], valuation_proof["statement_ttm_end"],
+                folder, Path(report_dir) if report_dir else None,
+            )
+            if saved:
+                metrics.update(saved["fields"])
+                valuation_proof["provider_archive"] = {
+                    key: value for key, value in saved.items() if key != "fields"
+                }
+                sources.append({
+                    "name": "Quan sát định giá Vietcap đã lưu",
+                    "url": saved["source_url"],
+                    "observed_at": saved["observed_at"],
+                    "sha256": saved["source_sha256"],
+                })
         from desktop.bank_metrics import extend as extend_bank
 
         def bank_add(name, value, unit, formula, source, stamp):

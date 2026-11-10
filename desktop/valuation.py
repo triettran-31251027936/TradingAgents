@@ -448,3 +448,95 @@ def extend(
             asof,
         )
     return proof
+
+
+PROVIDER_OBSERVATIONS = (
+    "shares_marketcap_observed",
+    "provider_pe_ttm_observed",
+    "provider_pb_observed",
+    "provider_roe_ttm_observed",
+)
+
+
+def replay_provider_observations(ticker, asof, close, ttm_end, folder, reports=None):
+    """Recover comparison-only fields from a verified same-day saved snapshot."""
+    import json
+
+    from desktop.vietnam import digest
+
+    paths = list(folder.glob(f"{ticker.removesuffix('.VN')}_{asof}_v*_news*.json"))
+    if reports is not None:
+        paths.extend(reports.glob(f"reports/{ticker}_*/quantitative.json"))
+        paths.extend(reports.glob(f"backtest/**/{ticker}_*/quantitative.json"))
+    candidates = []
+    for path in paths:
+        if (
+            path.name.endswith("_raw.json") or path.is_symlink()
+            or (path.parent / ".publishing").exists()
+            or path.resolve() != path.parent.resolve() / path.name
+        ):
+            continue
+        if reports is not None and path.name == "quantitative.json" and not path.resolve().is_relative_to(reports.resolve()):
+            continue
+        try:
+            if not 0 < path.stat().st_size <= 12 * 1024 * 1024:
+                continue
+            snapshot = json.loads(path.read_text())
+            if snapshot.get("ticker") != ticker or snapshot.get("analysis_date") != asof:
+                continue
+            stamp = datetime.fromisoformat(snapshot["valuation_observed_at"])
+            if stamp.tzinfo is None:
+                continue
+            stamp = stamp.astimezone(TZ)
+            saved = snapshot["valuation_reconciliation"]
+            comparison = saved["quote_comparison"]
+            source_name = "company_details" if saved["market_input_source"] == "company_details" else "valuation"
+            source = [
+                row for row in snapshot["sources"] if row["name"] == source_name
+                and len(row.get("sha256", "")) == 64
+                and datetime.fromisoformat(row["retrieved_at"]).astimezone(TZ).date().isoformat() == asof
+            ]
+            if (
+                stamp.date().isoformat() != asof or saved["status"] != "verified_current_inputs"
+                or not saved["marketcap_price_aligned"] or len(source) != 1
+                or comparison["canonical_date"] != asof or comparison["canonical_close"] != close
+                or comparison["provider_observed_at"] != snapshot["valuation_observed_at"]
+            ):
+                continue
+            metrics = snapshot["metrics"]
+            keys = (
+                PROVIDER_OBSERVATIONS if saved["statement_ttm_end"] == ttm_end
+                else PROVIDER_OBSERVATIONS[:1]
+            )
+            records = {
+                key: metrics[key] for key in keys
+                if key in metrics and metrics[key]["asof"] == asof
+                and metrics[key]["status"] == "available"
+                and number(metrics[key]["value"]) is not None
+            }
+            if (
+                not records or "shares_marketcap_observed" not in records
+                or snapshot["fingerprint"] != digest({
+                    k: v for k, v in snapshot.items() if k not in ("sources", "fingerprint")
+                })
+            ):
+                continue
+            shares = records["shares_marketcap_observed"]["value"]
+            if shares <= 0 or not float(shares).is_integer():
+                continue
+            candidates.append((stamp, snapshot["fingerprint"], records, source[0]))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue
+    if not candidates:
+        return None
+    stamp, fingerprint, records, source = max(candidates, key=lambda item: (item[0], item[1]))
+    return {
+        "observed_at": stamp.isoformat(),
+        "original_snapshot_fingerprint": fingerprint,
+        "source_url": source["url"],
+        "source_sha256": source["sha256"],
+        "fields": {
+            key: {**row, "formula": row["formula"] + "; replayed same-day saved provider observation"}
+            for key, row in records.items()
+        },
+    }

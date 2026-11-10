@@ -48,6 +48,7 @@ def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper
             news_article_limit=cfg.get("news_article_limit", 20),
             global_news_article_limit=cfg.get("global_news_article_limit", 10),
             global_news_lookback_days=cfg.get("global_news_lookback_days", 7),
+            report_dir=cfg.get("results_dir"),
         )
         graph.config["tool_vendors"] = {
             **graph.config.get("tool_vendors", {}),
@@ -274,6 +275,13 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                     if historical else "khớp số lượng hồ sơ hiện tại và vốn điều lệ"
                 )
                 text += f"Cơ sở cổ phiếu được đối chiếu riêng: {cell(shares.get('registered_shares'))} cổ phiếu đăng ký tại VSDC, mệnh giá {cell(shares.get('par_value_vnd'))} VND; {basis} báo cáo kỳ {cell(shares.get('statement_period'))}. Cổ phiếu quỹ và vốn ưu đãi được báo cáo bằng 0; không có thay đổi đăng ký sau kỳ này trong hồ sơ đã kiểm tra. Vốn hóa tính bằng giá đóng cửa chuẩn × cơ sở cổ phiếu đã đối chiếu. Chưa loại trừ mua lại chưa công bố sau kỳ báo cáo. Nguồn: {cell(share_source)}.\n\n"
+        archive = (q.get("valuation_reconciliation") or {}).get("provider_archive")
+        if archive:
+            text += (
+                "\nQuan sát định giá của nhà cung cấp được đọc lại từ snapshot lưu lúc "
+                + cell(archive["observed_at"]) + ". Nguồn " + cell(archive["source_url"])
+                + ". Các trường này dùng để so sánh với định giá tính từ báo cáo tài chính.\n"
+            )
         insider = q.get("insider_dealings") or {}
         market_news = q.get("market_news") or {}
         if market_news:

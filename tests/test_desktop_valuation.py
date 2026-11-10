@@ -460,3 +460,40 @@ def test_dated_registration_uses_anchored_close_and_never_current_broker_ratios(
     without_anchor, _ = independent_calculate(book, {}, {}, registry)
     assert without_anchor["pe_ttm"]["value"] is None
     assert without_anchor["registered_shares"]["value"] == 100
+
+
+def test_provider_replay_requires_same_day_same_close_and_intact_saved_snapshot(tmp_path):
+    from desktop.valuation import replay_provider_observations
+    from desktop.vietnam import digest, write_json
+
+    stamp = "2026-03-02T16:00:00+07:00"
+    item = {
+        "ticker": "AAA.VN", "analysis_date": "2026-03-02", "valuation_observed_at": stamp,
+        "valuation_reconciliation": {
+            "status": "verified_current_inputs", "marketcap_price_aligned": True,
+            "market_input_source": "company_details", "statement_ttm_end": [2025, 4],
+            "quote_comparison": {
+                "canonical_date": "2026-03-02", "canonical_close": 10, "provider_observed_at": stamp,
+            },
+        },
+        "sources": [{"name": "company_details", "retrieved_at": stamp, "sha256": "a" * 64,
+                     "url": "https://iq.vietcap.com.vn/"}],
+        "metrics": {"shares_marketcap_observed": {"asof": "2026-03-02", "value": 100,
+                                                 "status": "available", "formula": "Observed"},
+                    "provider_pe_ttm_observed": {"asof": "2026-03-02", "value": 10,
+                                                 "status": "available", "formula": "Observed"}},
+    }
+    item["fingerprint"] = digest({k: v for k, v in item.items() if k != "sources"})
+    path = tmp_path / "AAA_2026-03-02_v31_news20.json"
+    write_json(path, item)
+
+    def replay(close=10, period=(2025, 4)):
+        return replay_provider_observations("AAA.VN", "2026-03-02", close, list(period), tmp_path)
+
+    assert replay()["fields"]["shares_marketcap_observed"]["value"] == 100
+    assert replay(close=11) is None
+    assert replay()["fields"]["provider_pe_ttm_observed"]["value"] == 10
+    assert set(replay(period=(2025, 3))["fields"]) == {"shares_marketcap_observed"}
+    item["metrics"]["shares_marketcap_observed"]["value"] = 101
+    write_json(path, item)
+    assert replay() is None
