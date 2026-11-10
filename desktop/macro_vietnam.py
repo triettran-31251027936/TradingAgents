@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import calendar
 import hashlib
+import io
 import json
 import math
 import re
 import threading
 import time
 import xml.etree.ElementTree as ET
+import zipfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -21,6 +23,7 @@ from desktop.vietnam import write_json
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 ROOT = "https://nsdp.nso.gov.vn/GSO-chung/SDMXFiles/GSO/"
 FILES = {"cpi": "CPIVNM.xml", "labor": "LMIVNM.xml", "gdp": "GDPVNM.xml", "iip": "IIPVNM.xml"}
+GDP_WORKBOOK = "https://nsdp.nso.gov.vn/GSO-chung/Tu%E1%BA%A5n%20Anh/excel%20chung/GDP_VNM.xlsx"
 DOMAINS = {"cpi": "CPI", "labor": "LMI", "gdp": "NAG", "iip": "IND"}
 LOCK = threading.Lock()
 MAX_BYTES = 8 * 1024 * 1024
@@ -186,7 +189,108 @@ def parse_xml(raw, asof, observed_at):
     }
 
 
+def parse_gdp_workbook(raw, asof):
+    from openpyxl import load_workbook
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            if sum(member.file_size for member in archive.infolist()) > 64 * 1024 * 1024:
+                raise ValueError("GDP workbook expanded size exceeds limit")
+        workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
+        raise ValueError("Invalid NSDP GDP workbook") from exc
+
+    observations = {}
+    try:
+        for sheet in workbook:
+            if sheet.max_row is None or sheet.max_row > 160:
+                continue
+            rows = list(sheet.iter_rows(max_col=512, values_only=True))
+            metadata = {row[0]: row[1] for row in rows[:7]}
+            if any(
+                metadata.get(key) != expected
+                for key, expected in {
+                    "DATA_DOMAIN": "NAG",
+                    "REF_AREA": "VN",
+                    "UNIT_MULT": 9,
+                }.items()
+            ):
+                continue
+            periods = None
+            for row in rows:
+                if row[2:6] == ("INDICATOR", "Descriptor Vietnamese", "FREQ", "BASE_PER"):
+                    periods = row[6:]
+                if periods is None or row[2:6] != (
+                    "NGDP_R_PA_XDC",
+                    "Tổng sản phẩm trong nước theo giá so sánh 2020",
+                    "Q",
+                    2020,
+                ):
+                    continue
+                for period, value in zip(periods, row[6:], strict=True):
+                    if value is None:
+                        continue
+                    end = period_end(str(period), "Q")
+                    if end > asof:
+                        continue
+                    if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+                        raise ValueError("Invalid GDP workbook observation")
+                    existing = observations.get(period)
+                    if existing and existing["raw_value"] != value:
+                        raise ValueError("Conflicting GDP workbook observation")
+                    observations[period] = {
+                        "period": period,
+                        "period_end": end.isoformat(),
+                        "raw_value": value,
+                        "attributes": {"worksheet": sheet.title, "BASE_PER": "2020"},
+                    }
+    finally:
+        workbook.close()
+    if not observations:
+        raise ValueError("No labelled 2020-price quarterly GDP data")
+    return {
+        "NGDP_R_PA_XDC": {
+            "indicator": "NGDP_R_PA_XDC",
+            "frequency": "Q",
+            "dimensions": {
+                "DATA_DOMAIN": "NAG",
+                "REF_AREA": "VN",
+                "BASE_PER": "2020",
+                "UNIT_MULT": "9",
+            },
+            "prepared_at": None,
+            "observations": [observations[period] for period in sorted(observations)],
+        }
+    }
+
+
+def reconcile_gdp_base(workbook_series, xml_series):
+    """Use workbook labels only where each level also appears in the SDMX."""
+    if xml_series["dimensions"].get("UNIT_MULT") != "9":
+        raise ValueError("GDP scale differs between workbook and SDMX")
+    values = {row["period"]: [row["raw_value"]] for row in xml_series["observations"]}
+    for period, alternatives in xml_series["conflicting_observations"].items():
+        values[period] = [float(row["OBS_VALUE"]) for row in alternatives]
+    for row in workbook_series["observations"]:
+        if not any(
+            math.isclose(value, row["raw_value"], rel_tol=1e-12, abs_tol=0)
+            for value in values.get(row["period"], [])
+        ):
+            raise ValueError("2020-price GDP workbook value has no matching SDMX observation")
+
+
+def parse_source(kind, raw, asof, observed):
+    if kind == "gdp_workbook":
+        return parse_gdp_workbook(raw, asof)
+    parsed = parse_xml(raw, asof, observed)
+    if any(entry["dimensions"].get("DATA_DOMAIN") != DOMAINS[kind] for entry in parsed.values()):
+        raise ValueError("SDMX source domain mismatch")
+    return parsed
+
+
 def fetch(kind, cache_dir, asof, now, session):
+    url = GDP_WORKBOOK if kind == "gdp_workbook" else ROOT + FILES[kind]
+    suffix = ".xlsx" if kind == "gdp_workbook" else ".xml"
     folder = Path(cache_dir) / "vn-macro" / kind
     folder.mkdir(parents=True, exist_ok=True)
     latest = folder / "latest.json"
@@ -205,18 +309,18 @@ def fetch(kind, cache_dir, asof, now, session):
             return {
                 "status": "withheld",
                 "reason": "No locally observed SDMX vintage available by analysis date",
-                "url": ROOT + FILES[kind],
+                "url": url,
             }
         cached = max(candidates, key=lambda x: x["first_observed_at"])
     elif asof > now.date():
-        return {"status": "withheld", "reason": "Future analysis date", "url": ROOT + FILES[kind]}
+        return {"status": "withheld", "reason": "Future analysis date", "url": url}
     elif (
         not cached
         or now.timestamp() - datetime.fromisoformat(cached["retrieved_at"]).timestamp() >= 21600
     ):
         try:
             time.sleep(0.35)
-            response = session.get(ROOT + FILES[kind], timeout=(8, 20), stream=True)
+            response = session.get(url, timeout=(8, 20), stream=True)
             response.raise_for_status()
             chunks = []
             size = 0
@@ -229,13 +333,9 @@ def fetch(kind, cache_dir, asof, now, session):
             finally:
                 response.close()
             raw = b"".join(chunks)
-            parsed = parse_xml(raw, asof, now)
-            if any(
-                entry["dimensions"].get("DATA_DOMAIN") != DOMAINS[kind] for entry in parsed.values()
-            ):
-                raise ValueError("SDMX source domain mismatch")
+            parse_source(kind, raw, asof, now)
             digest = hashlib.sha256(raw).hexdigest()
-            path = folder / (digest + ".xml")
+            path = folder / (digest + suffix)
             record_path = folder / (digest + ".snapshot.json")
             old = (
                 json.loads(record_path.read_text())
@@ -249,7 +349,7 @@ def fetch(kind, cache_dir, asof, now, session):
                 path.chmod(0o600)
             cached = {
                 "status": "available",
-                "url": ROOT + FILES[kind],
+                "url": url,
                 "sha256": digest,
                 "retrieved_at": now.isoformat(),
                 "first_observed_at": old["first_observed_at"] if old else now.isoformat(),
@@ -261,17 +361,17 @@ def fetch(kind, cache_dir, asof, now, session):
                 return {
                     "status": "unavailable",
                     "reason": type(exc).__name__,
-                    "url": ROOT + FILES[kind],
+                    "url": url,
                 }
             cached = {**cached, "status": "cached_source_error", "error": type(exc).__name__}
-    path = folder / (cached["sha256"] + ".xml")
+    path = folder / (cached["sha256"] + suffix)
     if path.is_symlink():
         raise ValueError("Invalid macro cache path")
     raw = path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != cached["sha256"]:
         raise ValueError("SDMX cache checksum mismatch")
     observed = datetime.fromisoformat(cached["first_observed_at"])
-    return {**cached, "series": parse_xml(raw, asof, observed)}
+    return {**cached, "series": parse_source(kind, raw, asof, observed)}
 
 
 def normalize(alias, series, source, asof):
@@ -281,6 +381,10 @@ def normalize(alias, series, source, asof):
         )
     title, unit = SERIES[alias][2:]
     dim = series["dimensions"]
+    if alias == "vn_real_gdp":
+        base = dim["BASE_PER"]
+        title = f"Vietnam real GDP, quarterly, {base} prices"
+        unit = f"VND at {base} prices"
     raw_multiplier = dim.get("UNIT_MULT")
     if unit == "persons" or unit.startswith("VND"):
         allowed = ("0", "3", "6") if unit == "persons" else ("0", "3", "6", "9", "12")
@@ -355,6 +459,22 @@ def load(asof, cache_dir, *, now=None, session=None):
                     "reason": type(exc).__name__,
                     "url": ROOT + FILES[kind],
                 }
+        gdp_xml = sources["gdp"].get("series", {})
+        legacy = select_series(gdp_xml, "NGDP_R_PA_XDC", DIMENSIONS["vn_real_gdp"])
+        modern = select_series(gdp_xml, "NGDP_R_PA_XDC", {"FREQ": "Q", "BASE_PER": "2020"})
+        if (
+            legacy
+            and legacy.get("conflicting_observations")
+            and not (modern and modern["observations"])
+        ):
+            try:
+                sources["gdp_workbook"] = fetch("gdp_workbook", cache_dir, target, now, session)
+            except (ImportError, OSError, ValueError) as exc:
+                sources["gdp_workbook"] = {
+                    "status": "unavailable",
+                    "reason": type(exc).__name__,
+                    "url": GDP_WORKBOOK,
+                }
     output = {
         "asof": asof,
         "series": {},
@@ -369,13 +489,15 @@ def load(asof, cache_dir, *, now=None, session=None):
         )
         if conflicts:
             output["warnings"].append(
-                f"{kind}: {conflicts} series have conflicting observations under identical period/base dimensions; canonical values withheld"
+                f"{kind}: {conflicts} series have conflicting observations under identical period/base dimensions; ambiguous SDMX values excluded from canonical series"
             )
         if source.get("status") != "available":
             output["warnings"].append(kind + ": " + source.get("reason", source["status"]))
     for alias, (kind, code, *_) in SERIES.items():
         source = sources[kind]
         series = select_series(source.get("series", {}), code, DIMENSIONS.get(alias))
+        if alias == "vn_real_gdp" and modern and modern["observations"]:
+            series = modern
         if not series:
             output["series"][alias] = {
                 "status": source.get("status")
@@ -388,7 +510,18 @@ def load(asof, cache_dir, *, now=None, session=None):
             }
             continue
         try:
+            if alias == "vn_real_gdp" and series.get("conflicting_observations"):
+                workbook = sources.get("gdp_workbook", {})
+                labelled = workbook.get("series", {}).get(code)
+                if labelled:
+                    reconcile_gdp_base(labelled, series)
+                    series, source = labelled, workbook
             normalized = normalize(alias, series, source, target)
+            if source.get("url") == GDP_WORKBOOK:
+                normalized["corroborating_sdmx_sha256"] = sources["gdp"]["sha256"]
+                normalized["formula"] = (
+                    "Official NSDP workbook, quarterly GDP at 2020 prices, matched to SDMX levels; billion VND multiplied by 1e9"
+                )
         except ValueError as exc:
             normalized = {"status": "unavailable", "reason": str(exc), "latest": None}
         output["series"][alias] = normalized
@@ -465,8 +598,7 @@ def summary(bundle):
             k: v for k, v in monetary.items() if k not in ("metrics", "releases")
         } | {
             "releases": [
-                {k: v for k, v in r.items() if k != "metrics"}
-                for r in monetary.get("releases", [])
+                {k: v for k, v in r.items() if k != "metrics"} for r in monetary.get("releases", [])
             ]
         }
     return result
@@ -559,6 +691,8 @@ def metrics(bundle):
             + "; unit multiplier applied "
             + str(entry.get("unit_multiplier_applied", "unknown")),
         )
+        if alias == "vn_real_gdp_yoy" and entry.get("base_period"):
+            formula += "; price base " + entry["base_period"]
         if unit == "percent":
             value = value / 100 if value is not None else None
             unit = "fraction"

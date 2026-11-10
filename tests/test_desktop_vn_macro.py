@@ -304,3 +304,79 @@ def test_float_serialization_noise_is_recorded_without_material_conflict():
     series = m.select_series(parsed, "NGDP_PA_XDC", {"FREQ": "Q", "BASE_PER": "_Z"})
     assert series["numeric_duplicate_observations"] and not series["conflicting_observations"]
     assert len(series["observations"]) == 1
+
+
+@pytest.mark.parametrize("workbook_value,expected", [(160, 0.1), (165, None)])
+def test_gdp_rebase_requires_labelled_same_period_workbook_values(
+    tmp_path, monkeypatch, workbook_value, expected
+):
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    monkeypatch.setattr(m.time, "sleep", lambda *_: None)
+    workbook = Workbook()
+    sheet = workbook.active
+    for key, value in [("DATA_DOMAIN", "NAG"), ("REF_AREA", "VN"), ("UNIT_MULT", 9)]:
+        sheet.append([key, value])
+    for _ in range(4):
+        sheet.append([None])
+    sheet.append(
+        [
+            None,
+            None,
+            "INDICATOR",
+            "Descriptor Vietnamese",
+            "FREQ",
+            "BASE_PER",
+            "2025-Q3",
+            "2026-Q3",
+        ]
+    )
+    sheet.append(
+        [
+            None,
+            None,
+            "NGDP_R_PA_XDC",
+            "Tổng sản phẩm trong nước theo giá so sánh 2020",
+            "Q",
+            2020,
+            workbook_value,
+            176,
+        ]
+    )
+    data = BytesIO()
+    workbook.save(data)
+
+    class Rebased(Session):
+        def get(self, url, **kwargs):
+            if url == m.GDP_WORKBOOK:
+                return Response(data.getvalue())
+            if url.endswith("GDPVNM.xml"):
+                return Response(
+                    xml("gdp")
+                    .replace(
+                        b'OBS_VALUE="100"/>',
+                        b'OBS_VALUE="100"/><Obs TIME_PERIOD="2025-Q3" OBS_VALUE="160"/>',
+                    )
+                    .replace(b'OBS_VALUE="110"/>', b'OBS_VALUE="176"/>')
+                )
+            return super().get(url, **kwargs)
+
+    result = m.load(NOW.date().isoformat(), tmp_path, now=NOW, session=Rebased())
+    metrics = m.metrics(result)
+    if expected is None:
+        assert metrics["vn_real_gdp"]["value"] is None
+        assert metrics["vn_real_gdp_yoy"]["value"] is None
+        return
+    assert metrics["vn_real_gdp"]["value"] == 176_000_000_000
+    assert metrics["vn_real_gdp"]["unit"] == "VND at 2020 prices"
+    assert metrics["vn_real_gdp_yoy"]["value"] == pytest.approx(expected)
+    assert "price base 2020" in metrics["vn_real_gdp_yoy"]["formula"]
+    assert result["series"]["vn_real_gdp"]["corroborating_sdmx_sha256"]
+    historical = m.load("2026-10-29", tmp_path, now=NOW, session=Rebased())
+    assert m.metrics(historical)["vn_real_gdp"]["value"] is None
+    replay = m.load(
+        NOW.date().isoformat(), tmp_path, now=NOW + timedelta(days=1), session=Session(error=True)
+    )
+    assert m.metrics(replay)["vn_real_gdp_yoy"]["value"] == pytest.approx(expected)
