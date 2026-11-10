@@ -330,6 +330,16 @@ def extend(
     )
     provider_verified = bool(market_verified and preferred == 0 and not share_conflict)
     verified = bool(provider_verified or independent)
+    shares_reconciled = bool(
+        use_profile and registry_proof["verified"] and not historical
+        and shares == registry_proof["registered_shares"]
+    )
+    issuer_code = profile.get("provider_issuer_code")
+    roe_period_verified = bool(
+        shares_reconciled and chosen and issuer_code
+        and chosen.get("organCode") == issuer_code
+        and chosen.get("ratioType") == "RATIO_TTM"
+    )
     calculated_cap = close * registry_proof["registered_shares"] if independent else cap
     if share_conflict:
         reason = (
@@ -365,6 +375,8 @@ def extend(
             "scope": "Observation time is not quote time. Matching a prior close does not prove lag or adjustment cause; no automatic market-cap rebasing or valuation unlock.",
         },
         marketcap_price_aligned=aligned,
+        provider_share_count_independently_reconciled=shares_reconciled,
+        provider_roe_period_independently_verified=roe_period_verified,
         canonical_close_matches_analysis_date=same_session_close,
         preferred_capital=preferred,
         preferred_field=preferred_fields[0] if len(preferred_fields) == 1 else None,
@@ -418,11 +430,19 @@ def extend(
 
     emit(
         "shares_marketcap_observed",
-        shares if market_verified else None,
+        shares if market_verified or shares_reconciled else None,
         "shares",
-        "Provider share count used in observed market capitalization; not weighted-average EPS shares",
-        allow=market_verified,
-        source=market_source,
+        "Provider share count used in observed market capitalization; not weighted-average EPS shares"
+        + (
+            "; issuer share count independently reconciled with VSDC and published capital; "
+            "the provider valuation price may differ from the canonical close"
+            if shares_reconciled and not market_verified else ""
+        ),
+        allow=market_verified or shares_reconciled,
+        source=market_source if market_verified or not shares_reconciled else (
+            f"Vietcap company/details observed {observed.isoformat()}; "
+            f"{registry_proof['source_url']}; published capital {registry_proof['statement_period']}"
+        ),
     )
     if share_registry is not None:
         add(
@@ -470,7 +490,6 @@ def extend(
     for name, key, unit in [
         ("provider_pe_ttm_observed", "pe", "ratio"),
         ("provider_pb_observed", "pb", "ratio"),
-        ("provider_roe_ttm_observed", "roe", "fraction"),
     ]:
         add(
             name,
@@ -485,6 +504,20 @@ def extend(
             "Vietcap statistics-financial observed " + observed.isoformat(),
             asof,
         )
+    roe_aligned = provider_verified and comparison_aligned
+    roe_formula = "Provider-reported TTM ROE; methodology may differ from Python calculation"
+    if roe_period_verified:
+        roe_formula += "; latest TTM reporting period and issuer verified independently of market price"
+    elif not roe_aligned:
+        roe_formula += "; WITHHELD: provider TTM period or issuer could not be verified"
+    add(
+        "provider_roe_ttm_observed",
+        number(chosen.get("roe")) if roe_aligned or roe_period_verified else None,
+        "fraction",
+        roe_formula,
+        "Vietcap statistics-financial observed " + observed.isoformat(),
+        asof,
+    )
     return proof
 
 

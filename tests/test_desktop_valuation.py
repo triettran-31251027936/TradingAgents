@@ -80,6 +80,23 @@ def test_independent_share_basis_computes_with_canonical_price_and_retains_misma
 
 
 @pytest.mark.parametrize(
+    "code,ratio_type,expected", [("AAA1", "RATIO_TTM", 0.21), ("BBB1", "RATIO_TTM", None),
+                                 ("AAA1", "RATIO_YEAR", None)]
+)
+def test_provider_share_count_and_ttm_roe_do_not_depend_on_quote(code, ratio_type, expected):
+    book, raw, profile, registry = independent_fixture()
+    profile["provider_issuer_code"] = "AAA1"
+    raw["data"][0].update(organCode=code, ratioType=ratio_type)
+    result, proof = independent_calculate(book, raw, profile, registry)
+    assert not proof["marketcap_price_aligned"]
+    assert proof["provider_share_count_independently_reconciled"]
+    assert result["shares_marketcap_observed"]["value"] == 100
+    assert result["provider_roe_ttm_observed"]["value"] == expected
+    assert result["provider_pe_ttm_observed"]["value"] is None
+    assert result["provider_pb_observed"]["value"] is None
+
+
+@pytest.mark.parametrize(
     "fault",
     [
         "count",

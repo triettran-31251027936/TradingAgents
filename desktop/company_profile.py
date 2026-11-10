@@ -55,6 +55,7 @@ def normalize(raw, ticker, asof, observed_at):
         **base,
         "status": "available",
         "ticker": ticker + ".VN",
+        "provider_issuer_code": data.get("organCode"),
         "sector": data.get("sector"),
         "sector_vi": data.get("sectorVn"),
         "company_type": data.get("comTypeCode"),
