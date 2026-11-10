@@ -63,6 +63,8 @@ class Session:
         self.error = error
 
     def get(self, url, **kwargs):
+        if url in m.WORKBOOKS.values():
+            raise requests.ConnectionError("No workbook in this SDMX fixture")
         self.calls += 1
         if self.error:
             raise requests.ConnectionError("test offline")
@@ -380,3 +382,113 @@ def test_gdp_rebase_requires_labelled_same_period_workbook_values(
         NOW.date().isoformat(), tmp_path, now=NOW + timedelta(days=1), session=Session(error=True)
     )
     assert m.metrics(replay)["vn_real_gdp_yoy"]["value"] == pytest.approx(expected)
+
+
+def test_workbook_updates_keep_cpi_base_and_preliminary_labor(monkeypatch, tmp_path):
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    now = NOW + timedelta(days=11)
+    monkeypatch.setattr(m.time, "sleep", lambda *_: None)
+
+    def workbook(kind):
+        cpi = kind == "cpi"
+        wb = Workbook()
+        sheet = wb.active
+        sheet.title = "Dataset base 2024" if cpi else "Dataset_LMI"
+        for row in [
+            ["DATA_DOMAIN", "CPI" if cpi else "LMI"],
+            ["REF_AREA", "VN"],
+            ["UNIT_MULT", 0 if cpi else 3],
+            ["FREQ", "M" if cpi else "Q"],
+        ]:
+            sheet.append(row)
+        if cpi:
+            sheet.append(
+                [
+                    "Country code",
+                    "Descriptor",
+                    "Descriptor Vietnamese",
+                    "INDICATOR",
+                    "BASE_PER",
+                    None,
+                    "2026-09",
+                    "2026-10",
+                    "2026-11",
+                ]
+            )
+            sheet.append(
+                [
+                    "PCPI_IX",
+                    "Consumer Price Index, Index",
+                    "Chỉ số giá tiêu dùng",
+                    "PCPI_IX",
+                    2024,
+                    None,
+                    108,
+                    108.216,
+                    999,
+                ]
+            )
+        else:
+            sheet.append(
+                [
+                    "Country code",
+                    "Descriptor",
+                    "INDICATOR",
+                    "Descriptor in Vietnamese",
+                    "2026-Q2",
+                    "2026-Q3**",
+                ]
+            )
+            old = [53787.5, 52681.972, 2.23189, 8.67088, 1.62046]
+            new = [54065.902, 52974.273, 2.21782, 9.07184, 1.30723]
+            for (code, desc), before, after in zip(
+                m.LABOR_DESCRIPTORS.items(), old, new, strict=True
+            ):
+                sheet.append([None, desc, code, None, before, after])
+        output = BytesIO()
+        wb.save(output)
+        return output.getvalue()
+
+    class Updated(Session):
+        def get(self, url, **kwargs):
+            if url == m.WORKBOOKS["cpi_workbook"]:
+                return Response(workbook("cpi"))
+            if url == m.WORKBOOKS["labor_workbook"]:
+                return Response(workbook("labor"))
+            return super().get(url, **kwargs)
+
+    result = m.load(now.date().isoformat(), tmp_path, now=now, session=Updated())
+    metrics = m.metrics(result)
+    assert metrics["vn_cpi"]["value"] == pytest.approx(108.216)
+    assert "price base 2024" in metrics["vn_cpi"]["formula"]
+    assert metrics["vn_cpi_mom"]["value"] == pytest.approx(0.002)
+    assert metrics["vn_cpi_yoy"]["value"] is None
+    assert metrics["vn_labor_force"]["value"] == 54_065_902
+    assert metrics["vn_unemployment"]["value"] == pytest.approx(0.0221782)
+    assert "preliminary observation" in metrics["vn_unemployment"]["formula"]
+    fact = {
+        "value": 0.0509,
+        "unit": "fraction",
+        "asof": "2026-09",
+        "status": "available",
+        "source": "https://www.nso.gov.vn/test",
+        "published": "2026-11-03",
+        "source_content_sha256": "test",
+    }
+    release = {"metrics": {"vn_release_cpi_yoy": fact}}
+    m.apply_cpi_yoy_release(result, release)
+    assert m.metrics(result)["vn_cpi_yoy"]["value"] is None
+    fact["asof"] = "2026-10"
+    m.apply_cpi_yoy_release(result, release)
+    assert m.metrics(result)["vn_cpi_yoy"]["value"] == pytest.approx(0.0509)
+    assert m.metrics(result)["vn_cpi_yoy"]["source"] == fact["source"]
+    assert m.metrics(result)["vn_cpi_yoy"]["published"] == fact["published"]
+    before = m.load("2026-11-09", tmp_path, now=now, session=Session(error=True))
+    assert m.metrics(before)["vn_labor_force"]["value"] is None
+    replay = m.load(
+        now.date().isoformat(), tmp_path, now=now + timedelta(days=1), session=Session(error=True)
+    )
+    assert m.metrics(replay)["vn_labor_force"] == metrics["vn_labor_force"]

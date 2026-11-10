@@ -29,7 +29,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 22
+VERSION = 23
 LOCK = threading.Lock()
 
 
@@ -744,11 +744,12 @@ def load(
             from desktop import macro_vietnam
 
             domestic_macro = macro_vietnam.load(asof, cache_dir)
-            metrics.update(macro_vietnam.metrics(domestic_macro))
             from desktop.macro_releases import load as load_releases
 
             releases = load_releases(asof, cache_dir)
             domestic_macro["official_releases"] = releases
+            macro_vietnam.apply_cpi_yoy_release(domestic_macro, releases)
+            metrics.update(macro_vietnam.metrics(domestic_macro))
             metrics.update(releases["metrics"])
             domestic_macro["warnings"].extend(releases["warnings"])
             from desktop import monetary_vietnam

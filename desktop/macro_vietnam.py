@@ -23,7 +23,13 @@ from desktop.vietnam import write_json
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 ROOT = "https://nsdp.nso.gov.vn/GSO-chung/SDMXFiles/GSO/"
 FILES = {"cpi": "CPIVNM.xml", "labor": "LMIVNM.xml", "gdp": "GDPVNM.xml", "iip": "IIPVNM.xml"}
-GDP_WORKBOOK = "https://nsdp.nso.gov.vn/GSO-chung/Tu%E1%BA%A5n%20Anh/excel%20chung/GDP_VNM.xlsx"
+WORKBOOK_ROOT = "https://nsdp.nso.gov.vn/GSO-chung/Tu%E1%BA%A5n%20Anh/excel%20chung/"
+GDP_WORKBOOK = WORKBOOK_ROOT + "GDP_VNM.xlsx"
+WORKBOOKS = {
+    "gdp_workbook": GDP_WORKBOOK,
+    "cpi_workbook": WORKBOOK_ROOT + "CPI_VNM.xlsx",
+    "labor_workbook": WORKBOOK_ROOT + "LMI_VNM.xlsx",
+}
 DOMAINS = {"cpi": "CPI", "labor": "LMI", "gdp": "NAG", "iip": "IND"}
 LOCK = threading.Lock()
 MAX_BYTES = 8 * 1024 * 1024
@@ -189,17 +195,20 @@ def parse_xml(raw, asof, observed_at):
     }
 
 
-def parse_gdp_workbook(raw, asof):
+def open_nsdp_workbook(raw):
     from openpyxl import load_workbook
 
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             if sum(member.file_size for member in archive.infolist()) > 64 * 1024 * 1024:
                 raise ValueError("GDP workbook expanded size exceeds limit")
-        workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        return load_workbook(io.BytesIO(raw), read_only=True, data_only=True, keep_links=False)
     except (OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
-        raise ValueError("Invalid NSDP GDP workbook") from exc
+        raise ValueError("Invalid NSDP workbook") from exc
 
+
+def parse_gdp_workbook(raw, asof):
+    workbook = open_nsdp_workbook(raw)
     observations = {}
     try:
         for sheet in workbook:
@@ -264,6 +273,123 @@ def parse_gdp_workbook(raw, asof):
     }
 
 
+LABOR_DESCRIPTORS = {
+    "LLF_PE_NUM": "Labor Force (Thousands)",
+    "LE_PE_NUM": "Employment (Thousands)",
+    "LUR_PT": "Unemployment Rate at working age",
+    "LUR15O_PT": "Unemployment Rate of the youth aged 15-24",
+    "LEU_PT": "Underemployment Rate at working age",
+}
+
+
+def parse_update_workbook(kind, raw, asof):
+    cpi = kind == "cpi_workbook"
+    domain, frequency, scale = ("CPI", "M", 0) if cpi else ("LMI", "Q", 3)
+    sheet_name = "Dataset base 2024" if cpi else "Dataset_LMI"
+    workbook = open_nsdp_workbook(raw)
+    try:
+        if sheet_name not in workbook.sheetnames:
+            raise ValueError("Expected NSDP worksheet missing")
+        sheet = workbook[sheet_name]
+        if sheet.max_row is None or sheet.max_row > 160:
+            raise ValueError("Unexpected NSDP worksheet size")
+        rows = list(sheet.iter_rows(max_col=512, values_only=True))
+    finally:
+        workbook.close()
+    metadata = {row[0]: row[1] for row in rows[:9]}
+    expected = {"DATA_DOMAIN": domain, "REF_AREA": "VN", "UNIT_MULT": scale, "FREQ": frequency}
+    if any(metadata.get(key) != value for key, value in expected.items()):
+        raise ValueError("Unexpected NSDP workbook metadata")
+    header_prefix = (
+        ("Country code", "Descriptor", "Descriptor Vietnamese", "INDICATOR", "BASE_PER")
+        if cpi
+        else ("Country code", "Descriptor", "INDICATOR", "Descriptor in Vietnamese")
+    )
+    headers = [row for row in rows if row[: len(header_prefix)] == header_prefix]
+    if len(headers) != 1:
+        raise ValueError("Expected unique NSDP period header")
+    columns = {}
+    seen = set()
+    pattern = r"\d{4}-\d{2}" if cpi else r"\d{4}-Q[1-4](?:\*\*)?"
+    for column, label in enumerate(headers[0]):
+        if not isinstance(label, str) or not re.fullmatch(pattern, label):
+            continue
+        period = label.removesuffix("**")
+        if period in seen:
+            raise ValueError("Duplicate NSDP period")
+        seen.add(period)
+        end = period_end(period, frequency)
+        if end <= asof:
+            columns[column] = (period, end, label.endswith("**"))
+    result = {}
+    descriptors = {"PCPI_IX": "Consumer Price Index, Index"} if cpi else LABOR_DESCRIPTORS
+    for code, descriptor in descriptors.items():
+        candidates = [
+            row
+            for row in rows
+            if row[3 if cpi else 2] == code
+            and isinstance(row[1], str)
+            and row[1].strip() == descriptor
+            and (not cpi or row[4] == 2024 and row[2] == "Chỉ số giá tiêu dùng")
+        ]
+        if len(candidates) != 1:
+            raise ValueError("Expected unique NSDP indicator " + code)
+        observations = []
+        for column, (period, end, preliminary) in columns.items():
+            value = candidates[0][column]
+            if value in (None, "na"):
+                continue
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError("Invalid NSDP workbook observation")
+            observations.append(
+                {
+                    "period": period,
+                    "period_end": end.isoformat(),
+                    "raw_value": value,
+                    "attributes": {"worksheet": sheet_name, "preliminary": preliminary},
+                }
+            )
+        dimensions = {key: str(value) for key, value in expected.items()}
+        if cpi:
+            dimensions["BASE_PER"] = "2024"
+        result[code] = {
+            "indicator": code,
+            "frequency": frequency,
+            "dimensions": dimensions,
+            "prepared_at": None,
+            "observations": sorted(observations, key=lambda row: row["period"]),
+        }
+    return result
+
+
+def newer_workbook_series(kind, source, legacy, code):
+    candidate = source.get("series", {}).get(code)
+    if not candidate or not candidate["observations"]:
+        return None
+    previous = legacy["observations"][-1] if legacy and legacy["observations"] else None
+    if not previous:
+        return candidate
+    if candidate["observations"][-1]["period_end"] <= previous["period_end"]:
+        return None
+    if kind == "labor":
+        overlap = next(
+            (row for row in candidate["observations"] if row["period"] == previous["period"]),
+            None,
+        )
+        if (
+            legacy.get("conflicting_observations")
+            or not overlap
+            or not math.isclose(
+                overlap["raw_value"],
+                previous["raw_value"],
+                rel_tol=1e-12,
+                abs_tol=0,
+            )
+        ):
+            raise ValueError("Labor workbook does not match the latest overlapping SDMX period")
+    return candidate
+
+
 def reconcile_gdp_base(workbook_series, xml_series):
     """Use workbook labels only where each level also appears in the SDMX."""
     if xml_series["dimensions"].get("UNIT_MULT") != "9":
@@ -282,6 +408,8 @@ def reconcile_gdp_base(workbook_series, xml_series):
 def parse_source(kind, raw, asof, observed):
     if kind == "gdp_workbook":
         return parse_gdp_workbook(raw, asof)
+    if kind in WORKBOOKS:
+        return parse_update_workbook(kind, raw, asof)
     parsed = parse_xml(raw, asof, observed)
     if any(entry["dimensions"].get("DATA_DOMAIN") != DOMAINS[kind] for entry in parsed.values()):
         raise ValueError("SDMX source domain mismatch")
@@ -289,8 +417,8 @@ def parse_source(kind, raw, asof, observed):
 
 
 def fetch(kind, cache_dir, asof, now, session):
-    url = GDP_WORKBOOK if kind == "gdp_workbook" else ROOT + FILES[kind]
-    suffix = ".xlsx" if kind == "gdp_workbook" else ".xml"
+    url = WORKBOOKS[kind] if kind in WORKBOOKS else ROOT + FILES[kind]
+    suffix = ".xlsx" if kind in WORKBOOKS else ".xml"
     folder = Path(cache_dir) / "vn-macro" / kind
     folder.mkdir(parents=True, exist_ok=True)
     latest = folder / "latest.json"
@@ -308,7 +436,7 @@ def fetch(kind, cache_dir, asof, now, session):
         if not candidates:
             return {
                 "status": "withheld",
-                "reason": "No locally observed SDMX vintage available by analysis date",
+                "reason": "No locally observed NSDP vintage available by analysis date",
                 "url": url,
             }
         cached = max(candidates, key=lambda x: x["first_observed_at"])
@@ -328,7 +456,7 @@ def fetch(kind, cache_dir, asof, now, session):
                 for chunk in response.iter_content(65536):
                     size += len(chunk)
                     if size > MAX_BYTES:
-                        raise ValueError("SDMX response too large")
+                        raise ValueError("NSDP response too large")
                     chunks.append(chunk)
             finally:
                 response.close()
@@ -369,7 +497,7 @@ def fetch(kind, cache_dir, asof, now, session):
         raise ValueError("Invalid macro cache path")
     raw = path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != cached["sha256"]:
-        raise ValueError("SDMX cache checksum mismatch")
+        raise ValueError("NSDP cache checksum mismatch")
     observed = datetime.fromisoformat(cached["first_observed_at"])
     return {**cached, "series": parse_source(kind, raw, asof, observed)}
 
@@ -475,6 +603,33 @@ def load(asof, cache_dir, *, now=None, session=None):
                     "reason": type(exc).__name__,
                     "url": GDP_WORKBOOK,
                 }
+        for kind in ("cpi", "labor"):
+            period_start = target.replace(day=1)
+            if kind == "labor":
+                period_start = period_start.replace(month=3 * ((target.month - 1) // 3) + 1)
+            expected = (period_start - timedelta(days=1)).isoformat()
+            current = [
+                select_series(sources[kind].get("series", {}), code, DIMENSIONS[alias])
+                for alias, (source_kind, code, *_) in SERIES.items()
+                if source_kind == kind
+            ]
+            if all(
+                series
+                and not series.get("conflicting_observations")
+                and series["observations"]
+                and series["observations"][-1]["period_end"] >= expected
+                for series in current
+            ):
+                continue
+            workbook_kind = kind + "_workbook"
+            try:
+                sources[workbook_kind] = fetch(workbook_kind, cache_dir, target, now, session)
+            except (ImportError, OSError, ValueError) as exc:
+                sources[workbook_kind] = {
+                    "status": "unavailable",
+                    "reason": type(exc).__name__,
+                    "url": WORKBOOKS[workbook_kind],
+                }
     output = {
         "asof": asof,
         "series": {},
@@ -498,6 +653,15 @@ def load(asof, cache_dir, *, now=None, session=None):
         series = select_series(source.get("series", {}), code, DIMENSIONS.get(alias))
         if alias == "vn_real_gdp" and modern and modern["observations"]:
             series = modern
+        if kind in ("cpi", "labor"):
+            workbook = sources.get(kind + "_workbook", {})
+            try:
+                candidate = newer_workbook_series(kind, workbook, series, code)
+            except ValueError as exc:
+                output["warnings"].append(alias + ": " + str(exc))
+            else:
+                if candidate:
+                    series, source = candidate, workbook
         if not series:
             output["series"][alias] = {
                 "status": source.get("status")
@@ -546,6 +710,44 @@ def load(asof, cache_dir, *, now=None, session=None):
         for code, series in sources[kind].get("series", {}).items()
     }
     return output
+
+
+def apply_cpi_yoy_release(bundle, release):
+    """Use the same-month official comparison if the new base lacks a prior-year level."""
+    series = bundle.get("series", {})
+    index = series.get("vn_cpi", {})
+    yoy = series.get("vn_cpi_yoy", {})
+    latest = index.get("latest")
+    fact = release.get("metrics", {}).get("vn_release_cpi_yoy", {})
+    if (
+        index.get("base_period") != "2024"
+        or not latest
+        or yoy.get("latest")
+        and yoy["latest"]["period"] == latest["period"]
+        or fact.get("asof") != latest["period"]
+        or fact.get("status") != "available"
+        or fact.get("unit") != "fraction"
+        or fact.get("value") is None
+    ):
+        return
+    observation = {
+        "period": latest["period"],
+        "period_end": latest["period_end"],
+        "value": fact["value"] * 100,
+        "published": fact["published"],
+    }
+    bundle["series"]["vn_cpi_yoy"] = {
+        "title": "Vietnam CPI year-over-year, official release",
+        "unit": "percent",
+        "frequency": "M",
+        "status": index["status"],
+        "formula": "Official published year-over-year rate for the same month; 2024 workbook lacks the prior-year index for a same-base calculation",
+        "latest": observation,
+        "observations": [observation],
+        "source_url": fact["source"],
+        "source_sha256": fact["source_content_sha256"],
+        "published": fact["published"],
+    }
 
 
 def change(source, offset, freq, title):
@@ -684,15 +886,18 @@ def metrics(bundle):
         latest = entry.get("latest")
         unit = entry.get("unit", "unknown")
         value = latest["value"] if latest else None
+        format_name = "workbook" if entry.get("source_url") in WORKBOOKS.values() else "SDMX"
         formula = entry.get(
             "formula",
-            "Official NSDP SDMX "
+            f"Official NSDP {format_name} "
             + str(entry.get("indicator", alias))
             + "; unit multiplier applied "
             + str(entry.get("unit_multiplier_applied", "unknown")),
         )
-        if alias == "vn_real_gdp_yoy" and entry.get("base_period"):
+        if entry.get("base_period"):
             formula += "; price base " + entry["base_period"]
+        if latest and latest.get("attributes", {}).get("preliminary"):
+            formula += "; preliminary observation"
         if unit == "percent":
             value = value / 100 if value is not None else None
             unit = "fraction"
@@ -712,4 +917,6 @@ def metrics(bundle):
             "asof": latest["period_end"] if latest else bundle.get("asof"),
             "status": entry["status"] if latest else "missing",
         }
+        if entry.get("published"):
+            result[alias]["published"] = entry["published"]
     return result
