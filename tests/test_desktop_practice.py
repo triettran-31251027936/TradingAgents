@@ -298,6 +298,57 @@ def test_expiry_without_new_bar_releases_reserved_cash(tmp_path, monkeypatch):
     assert expired["available_cash"] == 3_000_000
 
 
+def test_closed_order_does_not_block_marks_after_an_unobserved_week(tmp_path, monkeypatch):
+    store, _ = approved_store(tmp_path, monkeypatch)
+    rows = [bar(f"09:{m}:00") for m in range(15, 20)]
+    initial = store.sync({"HPG.VN": board(rows)}, now=moment("09:20:00"))
+    assert initial["orders"][0]["status"] == "FILLED"
+    later_time = datetime(2026, 11, 10, 9, 19, tzinfo=TZ)
+    later_bar = {**bar("09:19:00", price=25500), "time": int(later_time.timestamp())}
+    later_board = {**board([later_bar]), "completed_sessions": ["2026-11-10"]}
+    updated = store.sync({"HPG.VN": later_board}, now=later_time.replace(minute=20))
+    assert updated["orders"] == initial["orders"]
+    assert updated["cash"] == initial["cash"]
+    assert updated["positions"]["HPG.VN"]["mark_price"] == 25500
+
+
+def test_late_bars_cannot_reopen_expired_order(tmp_path, monkeypatch):
+    store, _ = approved_store(tmp_path, monkeypatch)
+    rows = [bar(f"09:{m}:00", price=26000) for m in range(15, 20)]
+    expired = store.sync({"HPG.VN": board(rows)}, now=moment("15:00:00"))
+    assert expired["orders"][0]["status"] == "EXPIRED"
+
+    late = board([bar("09:20:00", price=24000)])
+    with pytest.raises(ValueError, match="lệnh đã kết thúc thay đổi"):
+        store.sync({"HPG.VN": late}, now=moment("15:01:00"))
+    unchanged = store.snapshot()
+    assert unchanged["orders"] == expired["orders"]
+    assert unchanged["cash"] == 3_000_000 and not unchanged["positions"]
+
+
+def test_market_dispatch_only_fetches_selected_open_or_held_tickers(tmp_path, monkeypatch):
+    from desktop import bridge, market_board
+
+    store, _ = approved_store(tmp_path, monkeypatch)
+    rows = [bar(f"09:{m}:00", price=26000) for m in range(15, 20)]
+    expired = store.sync({"HPG.VN": board(rows)}, now=moment("15:00:00"))
+    assert expired["orders"][0]["status"] == "EXPIRED"
+    monkeypatch.setattr(
+        bridge,
+        "config",
+        lambda: {"data_cache_dir": str(tmp_path), "desktop_vietnam": {"paper_enabled": True}},
+    )
+
+    def fetch(ticker, interval, cache_dir):
+        assert ticker == "BSR.VN"
+        return board(rows)
+
+    monkeypatch.setattr(market_board, "board", fetch)
+    report = bridge.dispatch("paper_market", {"ticker": "BSR.VN", "interval": "1m"})
+    assert report["matching_error"] is None
+    assert report["account"]["orders"] == expired["orders"]
+
+
 def test_market_failure_keeps_original_source_timestamp(tmp_path, monkeypatch):
     import json
 

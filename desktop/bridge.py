@@ -553,7 +553,7 @@ def dispatch(action, payload):
             interval = payload.get("interval", "1m")
             market = board(ticker, interval, cfg["data_cache_dir"])
             book = store.snapshot()
-            names = {o["ticker"] for o in book["orders"] if o["approved_at"]}
+            names = {o["ticker"] for o in book["orders"] if o["status"] == "APPROVED"}
             names.update(book["positions"])
             names.add(ticker)
             boards = {
@@ -596,7 +596,7 @@ def dispatch(action, payload):
             if date.fromisoformat(target) > date.today():
                 raise ValueError("Không tiến replay vào tương lai.")
             book = store.snapshot()
-            names = {o["ticker"] for o in book["orders"] if o["approved_at"]}
+            names = {o["ticker"] for o in book["orders"] if o["status"] == "APPROVED"}
             names.add(str(payload.get("ticker", "FPT.VN")).upper())
             frames = {
                 t: load(t, target, cfg["data_cache_dir"], refresh=True, prices_only=True)["prices"]

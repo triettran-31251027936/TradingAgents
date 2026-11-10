@@ -22,6 +22,7 @@ from desktop.vietnam import digest
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 STARTING_CASH = 3_000_000
+FINAL_ORDER_STATES = {"FILLED", "EXPIRED", "PARTIAL_EXPIRED", "MARGIN", "REJECTED", "CANCELED"}
 
 
 def local(value):
@@ -331,12 +332,13 @@ class PracticeStore(Store):
                         "INSERT OR REPLACE INTO marks VALUES(?,?)", (ticker, json.dumps(mark))
                     )
                     changed = True
+            approved_rows = list(
+                db.execute("SELECT * FROM orders WHERE approved_at IS NOT NULL ORDER BY approved_at,id")
+            )
             orders = [
-                {**json.loads(r["payload"]), "approved_at": r["approved_at"]}
-                for r in db.execute(
-                    "SELECT * FROM orders WHERE approved_at IS NOT NULL ORDER BY approved_at,id"
-                )
+                {**json.loads(r["payload"]), "approved_at": r["approved_at"]} for r in approved_rows
             ]
+            prior_results = {r["id"]: json.loads(r["result"] or "{}") for r in approved_rows}
             for order in orders:
                 if not db.execute(
                     "SELECT 1 FROM processed_approvals WHERE order_id=?", (order["id"],)
@@ -354,6 +356,10 @@ class PracticeStore(Store):
             for row in db.execute("SELECT ticker,payload FROM marks"):
                 exchanges[row["ticker"]] = json.loads(row["payload"])["exchange"]
             for order in orders:
+                # Continuity after a terminal order cannot affect that order.
+                # Still replay its frozen fills and verify the terminal receipt below.
+                if prior_results[order["id"]].get("state") in FINAL_ORDER_STATES:
+                    continue
                 rows = frames.get(order["ticker"], [])
                 approved = local(order["approved_at"])
                 relevant = [r for r in rows if r["time"] + 60 >= approved.timestamp()]
@@ -402,13 +408,10 @@ class PracticeStore(Store):
             for order in orders:
                 if order["ticker"] not in frames:
                     raise ValueError("Thiếu nến của lệnh đã duyệt; không tự tái tạo giao dịch.")
-                existing = json.loads(
-                    db.execute("SELECT result FROM orders WHERE id=?", (order["id"],)).fetchone()[
-                        "result"
-                    ]
-                    or "{}"
-                )
+                existing = prior_results[order["id"]]
                 current = result["orders"][order["id"]]
+                if existing.get("state") in FINAL_ORDER_STATES and current != existing:
+                    raise ValueError("Kết quả lệnh đã kết thúc thay đổi; dừng đối soát.")
                 if current["filled_quantity"] < existing.get("filled_quantity", 0):
                     raise ValueError("Thiếu lịch sử khớp gốc; dừng đối soát.")
                 if (
