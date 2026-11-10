@@ -420,9 +420,11 @@ def test_market_change_uses_quote_session_before_weekend_or_preopen(
         {"date": DAY, "close": 21000}
     ]
     monkeypatch.setattr(market_board, "_request", request)
-    monkeypatch.setattr(
-        market_board, "load", lambda *a, **kw: {"exchange": "HOSE", "prices": prices}
-    )
+    def daily(*args, **kwargs):
+        assert kwargs == {"prices_only": True, "price_history_limit": 60}
+        return {"exchange": "HOSE", "prices": prices}
+
+    monkeypatch.setattr(market_board, "load", daily)
     result = market_board.board(
         "HPG.VN", "1m", tmp_path, now=datetime.fromisoformat(observed).replace(tzinfo=TZ)
     )

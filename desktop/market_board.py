@@ -158,7 +158,11 @@ def board(ticker, interval, cache_dir, *, now=None, session=None, refresh=False)
                 trades = []
                 trade_error = type(exc).__name__
             daily = load(
-                name + ".VN", now.astimezone(TZ).date().isoformat(), cache_dir, prices_only=True
+                name + ".VN",
+                now.astimezone(TZ).date().isoformat(),
+                cache_dir,
+                prices_only=True,
+                price_history_limit=60,
             )
             quote = (
                 trades[0]

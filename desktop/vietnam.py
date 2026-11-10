@@ -557,6 +557,7 @@ def load(
     refresh=False,
     session=None,
     prices_only=False,
+    price_history_limit=None,
     news_article_limit=20,
     global_news_article_limit=10,
     global_news_lookback_days=7,
@@ -565,6 +566,11 @@ def load(
     ticker = symbol(ticker)
     date.fromisoformat(asof)
     folder = Path(cache_dir) / "vietnam"
+    if price_history_limit is not None and (
+        not prices_only or type(price_history_limit) is not int or not 2 <= price_history_limit <= 600
+    ):
+        raise ValueError("A bounded price history requires prices_only and 2–600 candles")
+    price_count = (price_history_limit or 600) if prices_only else 1500
     if type(news_article_limit) is not int or news_article_limit < 1:
         raise ValueError("news_article_limit must be a positive integer")
     if (
@@ -577,7 +583,7 @@ def load(
     path = folder / (
         f"{ticker}_{asof}_v{VERSION}"
         + (
-            "_prices.json"
+            ("_prices.json" if price_history_limit is None else f"_prices{price_count}.json")
             if prices_only
             else f"_news{news_article_limit}_global{global_news_article_limit}x{global_news_lookback_days}.json"
         )
@@ -642,7 +648,7 @@ def load(
                     "timeFrame": "ONE_DAY",
                     "symbols": [ticker],
                     "to": int(cutoff.timestamp()),
-                    "countBack": 600 if prices_only else 1500,
+                    "countBack": price_count,
                 },
                 True,
             ),
@@ -1030,7 +1036,7 @@ def load(
             "price_basis": price_basis,
             "benchmark": benchmark,
             "history_coverage": {
-                "requested_candles": 600 if prices_only else 1500,
+                "requested_candles": price_count,
                 "requested_start": history_start,
                 "completed_rows": len(prices),
                 "first_date": prices[0]["date"],
