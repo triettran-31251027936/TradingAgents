@@ -147,3 +147,45 @@ def metrics(data):
             "status": "available" if row else "missing",
         }
     }
+
+
+def trailing_yield(data, registry, share_proof, close_basis):
+    """Price-relative entitlement yield on an unchanged registered-share basis."""
+    asof = data["asof"]
+    rows = data["records"]
+    record_dates = [row["record_date"] for row in rows]
+    reason = None
+    total = None
+    close = close_basis.get("observed_close_vnd")
+    if data["status"] != "available" or not rows:
+        reason = "No complete parsed VSDC cash-entitlement sample"
+    elif len(set(record_dates)) != len(record_dates):
+        reason = "Multiple notices share a record date; potential amendments or overlapping rights"
+    elif any(row["scheduled_payment_date"] > asof for row in rows):
+        reason = "At least one published payment is still scheduled after the analysis date"
+    elif not share_proof.get("verified") or not registry or not registry.get("registration_history"):
+        reason = "Common-share basis is unverified"
+    elif any(
+        event["change"] != 0 and min(record_dates) <= event["date"] <= asof
+        for event in registry["registration_history"]
+    ):
+        reason = "Registration changed on or after a cash entitlement date; per-share rebasing is required"
+    elif close_basis.get("status") != "anchored" or close_basis.get("date") != asof or not close or close <= 0:
+        reason = "No independently anchored closing price for the analysis date"
+    else:
+        total = sum(row["cash_vnd_per_eligible_share"] for row in rows)
+    formula = (
+        "Sum of pre-tax VSDC cash entitlements with record dates in the prior 365 days "
+        "and scheduled payment by analysis date / independently anchored closing price. "
+        "Requires a verified share basis with no intervening registration changes. "
+        "Scheduled entitlements are not proof of receipt or reinvestment."
+    )
+    return {
+        "value": total / close if total is not None else None,
+        "unit": "fraction",
+        "formula": formula if reason is None else formula + " Withheld: " + reason,
+        "source": "VSDC corporate-rights notices and share registry; "
+        + (close_basis.get("source") or "CafeF") + " actual session close",
+        "asof": asof,
+        "status": "available" if total is not None else "missing",
+    }

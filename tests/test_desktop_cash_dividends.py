@@ -70,3 +70,22 @@ def test_rights_listing_filters_dates_without_assuming_sort_order(tmp_path, monk
     assert calls == ["https://vsdc.vn/ad/197086"]
     assert data["status"] == "available"
     assert data["records"][0]["cash_vnd_per_eligible_share"] == 6000
+
+
+def test_trailing_yield_requires_stable_share_count_and_same_day_anchored_close():
+    from desktop.cash_dividends import trailing_yield
+
+    notice = {"record_date": "2026-06-30", "scheduled_payment_date": "2026-07-22",
+              "cash_vnd_per_eligible_share": 300}
+    data = {"asof": "2026-11-11", "status": "available", "records": [notice]}
+    registry = {"registration_history": [{"date": "2025-11-13", "change": 1_000_000},
+                                         {"date": "2026-08-01", "change": 0}]}
+    proof = {"verified": True}
+    close = {"status": "anchored", "date": "2026-11-11", "observed_close_vnd": 25_300}
+    assert trailing_yield(data, registry, proof, close)["value"] == pytest.approx(300 / 25_300)
+    assert trailing_yield(data, registry, proof, {**close, "date": "2026-11-10"})["value"] is None
+    assert trailing_yield(data, registry, {}, close)["value"] is None
+    assert trailing_yield({**data, "records": [notice, notice]}, registry, proof, close)["value"] is None
+    registry["registration_history"][1]["change"] = 1_000_000
+    withheld = trailing_yield(data, registry, proof, close)
+    assert withheld["value"] is None and "rebasing" in withheld["formula"]

@@ -30,7 +30,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 44
+VERSION = 45
 VERIFIED_SNAPSHOT_PREFIX = "Verified canonical VN snapshot (same source as other VN tools):\n"
 LOCK = threading.Lock()
 
@@ -1155,6 +1155,23 @@ def load(
 
             cash_dividend_evidence = cash_dividends.load(ticker, asof, cache_dir)
             metrics.update(cash_dividends.metrics(cash_dividend_evidence))
+            dividend_close = price_basis
+            if not price_basis and prices[-1]["date"] == asof and cash_dividend_evidence["status"] == "available":
+                _, dividend_close = anchor_history(prices[-1:], ticker, fetch)
+            share_proof = valuation_proof.get("registered_share_reconciliation", {})
+            dividend_yield = cash_dividends.trailing_yield(
+                cash_dividend_evidence, registry, share_proof, dividend_close
+            )
+            metrics["cash_dividend_yield_365d"] = dividend_yield
+            cash_dividend_evidence = {
+                **cash_dividend_evidence,
+                "yield_close_basis": dividend_close,
+                "yield_share_basis": {
+                    "verified": share_proof.get("verified", False),
+                    "registered_shares": share_proof.get("registered_shares"),
+                    "source_url": share_proof.get("notice_url") or share_proof.get("source_url"),
+                },
+            }
             missing = missing_metrics(metrics)
             warnings.extend(cash_dividend_evidence["warnings"])
             sources.extend(
