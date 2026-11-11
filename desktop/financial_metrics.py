@@ -98,6 +98,22 @@ def ttm(section, key):
     return sum(values), proof, keys
 
 
+def reconciled_assets(book, field, target):
+    rows = [row for row in book["balance"]["quarters"] if period(row) == target]
+    if len(rows) != 1:
+        return None, "Missing or duplicate balance-sheet period"
+    row = rows[0]
+    assets, liabilities, equity = (
+        number(row.get(field(book, "balance", *titles)))
+        for titles in (("Total Assets",), ("Liabilities", "TOTAL LIABILITIES"), ("Owner's Equity",))
+    )
+    if assets is None or liabilities is None or equity is None or assets <= 0 or liabilities < 0:
+        return None, "Missing or invalid balance-sheet totals"
+    if abs(assets - liabilities - equity) > max(1, assets * 0.00001):
+        return None, "Assets do not reconcile to liabilities plus equity"
+    return assets, f"{target[0]}-Q{target[1]} public:{str(row.get('publicDate', ''))[:10]}"
+
+
 def extend(book, add, field):
     def key(kind, *titles):
         return field(book, kind, *titles)
@@ -180,6 +196,26 @@ def extend(book, add, field):
         "CFO TTM / positive total after-tax profit TTM, same quarters",
         source,
         stamp,
+    )
+    profit = values["net_profit_ttm"]
+    window = windows["net_profit_ttm"]
+    roa = None
+    roa_stamp = stamp
+    if profit is not None and window:
+        year, quarter = window[-1]
+        opening, opening_note = reconciled_assets(book, field, (year - 1, quarter))
+        closing, closing_note = reconciled_assets(book, field, (year, quarter))
+        roa_stamp = f"Income: {stamp}; opening balance: {opening_note}; closing balance: {closing_note}"
+        if opening is not None and closing is not None:
+            roa = ratio(profit, (opening + closing) / 2)
+    add(
+        "roa_ttm",
+        roa,
+        "fraction",
+        "Consolidated after-tax profit for four contiguous quarters / average of reconciled total assets "
+        "at the start and end of the same window.",
+        source,
+        roa_stamp,
     )
     bal = last("balance")
     bdate = f"{bal.get('yearReport', '?')}-Q{bal.get('lengthReport', '?')} public:{str(bal.get('publicDate', ''))[:10]}"

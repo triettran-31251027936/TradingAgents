@@ -262,3 +262,34 @@ def test_vhm_bond_note_requires_publication_and_matching_balance_sheet():
     assert json.loads(capsule({**q, "debt_notes": notes}))["debt_notes"] == notes
     q["metrics"]["gross_borrowings"]["asof"] = "2026-Q2 public:2026-07-30"
     assert load("VHM", "2026-11-10", q["metrics"]) == {}
+
+
+def test_roa_ttm_uses_reconciled_same_window_assets():
+    from desktop.financial_metrics import extend
+
+    income = section([-10, -20, -30, -40], annual=-100)
+    opening = {
+        "yearReport": 2024, "lengthReport": 4, "publicDate": "2025-03-01",
+        "Total Assets": 400, "Liabilities": 450, "Owner's Equity": -50,
+    }
+    closing = {
+        "yearReport": 2025, "lengthReport": 4, "publicDate": "2026-03-02",
+        "Total Assets": 600, "Liabilities": 500, "Owner's Equity": 100,
+    }
+    later = {**closing, "yearReport": 2026, "lengthReport": 1, "Total Assets": 900}
+    balance = {"quarters": [opening, closing, later]}
+    book = {"income": income, "balance": balance, "cash": {"quarters": []}}
+
+    def calculate():
+        metrics = {}
+        extend(book, lambda name, *values: metrics.update({name: values}),
+               lambda _book, _kind, title, *_aliases: "value" if title == "Net profit/(loss) after tax" else title)
+        return metrics["roa_ttm"]
+
+    assert calculate()[0] == pytest.approx(-0.2)
+    assert "2025-03-01" in calculate()[-1] and "2026-03-02" in calculate()[-1]
+    opening["Owner's Equity"] = -100
+    assert calculate()[0] is None
+    opening["Owner's Equity"] = -50
+    balance["quarters"].append(closing.copy())
+    assert calculate()[0] is None
