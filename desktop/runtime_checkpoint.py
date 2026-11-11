@@ -65,6 +65,10 @@ class RuntimeCheckpoint:
                     raise ValueError("Handoff snapshot mismatch")
             for field in ("stats", "handoffs", "grounding", "incomplete_roles"):
                 setattr(self.runtime, field, value[field])
+            news_tool_receipts = value.get("news_tool_receipts", {})
+            if not isinstance(news_tool_receipts, dict):
+                raise ValueError("Invalid news tool receipts")
+            self.runtime.news_tool_receipts = news_tool_receipts
             self.runtime.decision = decision
             self.runtime.paid_budget.calls = calls
             self.usage.items = value["usage_items"]
@@ -127,6 +131,7 @@ class RuntimeCheckpoint:
                             "grounding",
                             "incomplete_roles",
                             "decision",
+                            "news_tool_receipts",
                         )
                     }
                 )

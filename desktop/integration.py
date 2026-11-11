@@ -168,6 +168,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
         }
         result["grounding"] = runtime.grounding
         result["handoffs"] = runtime.handoffs
+        result["news_tool_receipts"] = list(runtime.news_tool_receipts.values())
         result["account_metrics"] = runtime.account_metrics
         vietnam.write_json(folder / "handoffs.json", runtime.handoffs)
         result["paid_budget"] = runtime.paid_budget.summary()
@@ -357,6 +358,23 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
             else:
                 timing = "retrieval/observation time unavailable"
             text += f"\n- {cell(source.get('name', 'Source'))}: {cell(source.get('url') or source.get('source_url') or 'URL unavailable')} ({cell(timing)})\n"
+    news_receipts = result.get("news_tool_receipts", [])
+    if news_receipts:
+        text += "\n### Dữ liệu công cụ trong đầu vào News Analyst\n\n"
+        text += "| Công cụ | Nguồn | Ngày phân tích | Trạng thái | Số mục | SHA-256 kết quả |\n|---|---|---|---|---:|---|\n"
+        for receipt in news_receipts:
+            if receipt["tool"] == "get_global_news":
+                source = ", ".join(["VnEconomy RSS", *receipt["upstream_vendors"]])
+            else:
+                source = receipt["endpoint"] or "Polymarket"
+                if receipt["replayed"]:
+                    source += " (bản lưu)"
+            values = (
+                receipt["tool"], source, receipt["date"], receipt["status"],
+                receipt["item_count"], receipt["result_sha256"],
+            )
+            text += "| " + " | ".join(map(cell, values)) + " |\n"
+        text += "\nSố mục của get_global_news chỉ tính mẫu RSS VnEconomy. Bảng ghi dữ liệu đưa vào lượt gọi News Analyst.\n"
     d = result.get("decision")
     account = result.get("account_metrics") or {}
     if account.get("status") == "available":

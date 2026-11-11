@@ -266,3 +266,44 @@ def test_cache_checkpoint_write_failure_never_falls_through_to_paid_call(tmp_pat
     with pytest.raises(ValueError, match="checkpoint write failure"):
         runtime.invoke("News Analyst", spec, model, "Same evidence", {})
     assert runtime.paid_budget.calls == 1
+
+
+def test_news_tool_evidence_survives_resume_and_omits_tool_text(tmp_path):
+    from langchain_core.messages import SystemMessage, ToolMessage
+    from desktop.prediction_markets import SEARCH
+
+    cfg = config(tmp_path)
+    day = "2026-11-10"
+    quant = {"analysis_date": day, "fingerprint": "exact-snapshot", "metrics": {}, "ticker": "VHM.VN"}
+    runtime = Runtime(cfg, quant=quant)
+    runtime.bind_checkpoint("news", TokenUsage(), resuming=False)
+    news = ToolMessage(
+        name="get_global_news",
+        tool_call_id="news-1",
+        content=json.dumps({
+            "upstream": "body of original article",
+            "upstream_vendors": ["yfinance"],
+            "vneconomy_rss": {"requested_dates": ["2026-11-03", day],
+                             "status": "available", "records": [{"title": "excerpt"}]},
+        }),
+    )
+    prediction = ToolMessage(
+        name="get_prediction_markets",
+        tool_call_id="pred-1",
+        content=json.dumps({"asof": day, "status": "available", "source": SEARCH,
+                            "markets": [{}], "replayed": True}),
+    )
+    model = SimpleNamespace(invoke=lambda *args, **kwargs: AIMessage(content="test"))
+    context = SystemMessage(content="exact-snapshot")
+    runtime.invoke("News Analyst", {"provider": "codex_cli"}, model, [context, news, prediction], {})
+    runtime.invoke("News Analyst", {"provider": "codex_cli"}, model, [context, news], {})
+
+    restored = Runtime(cfg, quant=quant)
+    checkpoint = restored.bind_checkpoint("news", TokenUsage(), resuming=True)
+    receipts = {item["tool"]: item for item in restored.news_tool_receipts.values()}
+    assert set(receipts) == {"get_global_news", "get_prediction_markets"}
+    assert receipts["get_global_news"]["upstream_vendors"] == ["yfinance"]
+    assert receipts["get_global_news"]["item_count"] == 1
+    assert receipts["get_prediction_markets"]["endpoint"] == SEARCH
+    assert receipts["get_prediction_markets"]["replayed"]
+    assert "body of original article" not in checkpoint.path.read_text()
