@@ -572,3 +572,31 @@ def test_missing_capsule_blocks_false_completion(tmp_path):
     with pytest.raises(ValueError, match="handoff"):
         runtime.invoke("Trader", {}, Backend(), [], {})
     assert "Trader" not in runtime.handoffs
+
+
+def test_news_prompt_keeps_full_tool_response_and_removes_only_identical_snapshot_rows(tmp_path):
+    from langchain_core.messages import ToolMessage
+
+    day = "2026-11-10"
+    exact = {"id": "one", "excerpt": "First original excerpt"}
+    changed = {"id": "two", "excerpt": "Second original excerpt"}
+    untouched = {"id": "three", "excerpt": "Third original excerpt"}
+    q = bundle()
+    q["analysis_date"] = day
+    q["market_news"] = {"records": [exact, changed, untouched], "status": "available"}
+    data = {"upstream": "International original", "vneconomy_rss": {
+        "requested_dates": ["2026-11-03", day],
+        "records": [exact, {**changed, "excerpt": "Changed tool excerpt"}],
+    }}
+    msg = ToolMessage(name="get_global_news", tool_call_id="news", content=json.dumps(data))
+    runtime = Runtime({"data_cache_dir": str(tmp_path)}, quant=q)
+    system, output = runtime.prompt([msg], "News Analyst")
+    assert output == msg
+    assert exact["excerpt"] not in system.content
+    assert '"record_ids_in_get_global_news": ["one"]' in system.content
+    assert changed["excerpt"] in system.content and untouched["excerpt"] in system.content
+    assert q["market_news"]["records"] == [exact, changed, untouched]
+    for role in ("Market Analyst", "Portfolio Manager"):
+        assert exact["excerpt"] in runtime.prompt([msg], role)[0].content
+    failed = msg.model_copy(update={"status": "error"})
+    assert exact["excerpt"] in runtime.prompt([failed], "News Analyst")[0].content
