@@ -634,3 +634,68 @@ def test_immutable_provider_receipt_survives_rolling_cache_replacement(tmp_path)
     full.write_text(full.read_text().replace('"value": 10,', '"value": 11,'))
     assert set(replay()["fields"]) == {"shares_marketcap_observed"}
     assert replay_provider_observations("AAA.VN", day, 11, [2025, 4], tmp_path) is None
+
+
+def test_archive_keeps_price_independent_fields_when_close_cannot_be_verified(tmp_path):
+    from desktop.valuation import archive_provider_observation, replay_provider_observations
+
+    day = "2026-03-02"
+    stamp = f"{day}T16:00:00+07:00"
+    details = "https://iq.vietcap.com.vn/details"
+    registry_url = "https://vsdc.vn/vi/s-detail/12"
+    metric = {"asof": day, "status": "available", "formula": "Observed"}
+    snapshot = {
+        "ticker": "AAA.VN",
+        "analysis_date": day,
+        "prices": [{"date": day, "close": 10}],
+        "valuation_observed_at": stamp,
+        "fingerprint": "snapshot",
+        "valuation_reconciliation": {
+            "status": "derived_from_reconciled_share_snapshot",
+            "market_input_source": "company_details",
+            "marketcap_price_aligned": False,
+            "statement_ttm_end": [2025, 4],
+            "provider_share_count_independently_reconciled": True,
+            "provider_roe_period_independently_verified": True,
+            "registered_share_reconciliation": {
+                "verified": True, "source_url": registry_url, "registered_shares": 100,
+            },
+            "quote_comparison": {
+                "canonical_date": day, "canonical_close": 10, "provider_observed_at": stamp,
+            },
+        },
+        "sources": [
+            {"name": "company_details", "url": details, "retrieved_at": stamp, "sha256": "a" * 64},
+            {"name": "valuation", "url": "https://iq.vietcap.com.vn/ratios",
+             "retrieved_at": stamp, "sha256": "b" * 64},
+            {"name": "VSDC registered-share history", "url": registry_url,
+             "retrieved_at": stamp, "sha256": "c" * 64},
+        ],
+        "metrics": {
+            "shares_marketcap_observed": {**metric, "value": 100},
+            "provider_roe_ttm_observed": {**metric, "value": 0.21},
+            "provider_pe_ttm_observed": {**metric, "value": 10},
+        },
+    }
+    archive_provider_observation(snapshot, tmp_path)
+
+    def replay(day=day, period=(2025, 4), **kwargs):
+        return replay_provider_observations("AAA.VN", day, None, list(period), tmp_path, **kwargs)
+
+    shares = "shares_marketcap_observed"
+    roe = "provider_roe_ttm_observed"
+    assert set(replay()["fields"]) == {shares, roe}
+    assert len(replay()["source_receipts"]) == 3
+    assert set(replay(period=(2025, 3))["fields"]) == {shares}
+    assert set(replay(needed={roe}, shares=100)["fields"]) == {roe}
+    assert replay(needed={roe}, shares=200) is None
+    assert replay(day="2026-03-03") is None
+
+    proof = snapshot["valuation_reconciliation"]
+    proof["provider_archive"] = {"restored_fields": [roe]}
+    snapshot["fingerprint"] = "mixed-snapshot"
+    archive_provider_observation(snapshot, tmp_path)
+    receipts = list(tmp_path.glob("valuation-observations/AAA/*/*.json"))
+    assert len(receipts) == 2
+    mixed = next(path for path in receipts if "mixed-snapshot" in path.read_text())
+    assert f'"{roe}"' not in mixed.read_text()

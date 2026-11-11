@@ -30,7 +30,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 33
+VERSION = 34
 VERIFIED_SNAPSHOT_PREFIX = "Verified canonical VN snapshot (same source as other VN tools):\n"
 LOCK = threading.Lock()
 
@@ -845,25 +845,27 @@ def load(
                 else "Vietcap OHLCV"
             ),
         )
-        if not prices_only and (
-            price_basis.get("status") == "anchored" and price_basis.get("date") == asof
-            or prices[-1]["date"] == asof and valuation_observed_at[:10] == asof
-        ):
+        if not prices_only and prices[-1]["date"] == asof:
             from desktop.valuation import PROVIDER_OBSERVATIONS, replay_provider_observations
 
-            current_count = sum(metrics.get(key, {}).get("value") is not None for key in PROVIDER_OBSERVATIONS)
+            needed = {key for key in PROVIDER_OBSERVATIONS if metrics[key]["value"] is None}
+            price_verified = (
+                price_basis.get("status") == "anchored" and price_basis.get("date") == asof
+                or valuation_observed_at[:10] == asof
+            )
             saved = (
                 replay_provider_observations(
-                    ticker + ".VN", asof, prices[-1]["close"], valuation_proof["statement_ttm_end"],
-                    folder, Path(report_dir) if report_dir else None,
+                    ticker + ".VN", asof, prices[-1]["close"] if price_verified else None,
+                    valuation_proof["statement_ttm_end"], folder, Path(report_dir) if report_dir else None,
+                    needed=needed, shares=metrics["shares_marketcap_observed"]["value"],
                 )
-                if current_count < len(PROVIDER_OBSERVATIONS)
-                else None
+                if needed else None
             )
-            if saved and len(saved["fields"]) > current_count:
+            if saved:
                 metrics.update(saved["fields"])
                 valuation_proof["provider_archive"] = {
-                    key: value for key, value in saved.items() if key != "fields"
+                    **{key: value for key, value in saved.items() if key != "fields"},
+                    "restored_fields": sorted(saved["fields"]),
                 }
                 sources.append({
                     "name": "Quan sát định giá Vietcap đã lưu",

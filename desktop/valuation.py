@@ -537,10 +537,13 @@ def _provider_candidate(snapshot, asof, close, ttm_end, *, archive=False):
         stamp = stamp.astimezone(TZ)
         saved = snapshot["valuation_reconciliation"]
         comparison = saved["quote_comparison"]
+        restored = saved.get("provider_archive")
+        if restored and not restored.get("restored_fields"):
+            return None
         source_name = "company_details" if saved["market_input_source"] == "company_details" else "valuation"
         sources = [
             row for row in snapshot["sources"]
-            if row["name"] in ("company_details", "valuation")
+            if row["name"] in ("company_details", "valuation", "VSDC registered-share history")
             and isinstance(row.get("url"), str)
             and len(row.get("sha256", "")) == 64
             and datetime.fromisoformat(row["retrieved_at"]).tzinfo is not None
@@ -548,28 +551,46 @@ def _provider_candidate(snapshot, asof, close, ttm_end, *, archive=False):
         ]
         primary = [row for row in sources if row["name"] == source_name]
         if (
-            stamp.date().isoformat() != asof or saved["status"] != "verified_current_inputs"
-            or saved.get("provider_archive")
-            or not saved["marketcap_price_aligned"] or len(primary) != 1
-            or comparison["canonical_date"] != asof or comparison["canonical_close"] != close
+            stamp.date().isoformat() != asof or len(primary) != 1
+            or comparison["canonical_date"] != asof
             or comparison["provider_observed_at"] != snapshot["valuation_observed_at"]
         ):
             return None
-        metrics = snapshot["metrics"]
         stats = [row for row in sources if row["name"] == "valuation"]
-        keys = (
-            PROVIDER_OBSERVATIONS
-            if saved["statement_ttm_end"] == ttm_end and (not archive or len(stats) == 1)
-            else PROVIDER_OBSERVATIONS[:1]
+        registry = saved.get("registered_share_reconciliation") or {}
+        registry_receipts = [
+            row for row in sources if row["name"] == "VSDC registered-share history"
+            and row["url"] == registry.get("source_url")
+        ]
+        aligned = (
+            close is not None and saved["status"] == "verified_current_inputs"
+            and saved["marketcap_price_aligned"] and comparison["canonical_close"] == close
         )
+        independent = (
+            source_name == "company_details"
+            and saved.get("provider_share_count_independently_reconciled") is True
+            and registry.get("verified") is True and len(registry_receipts) == 1
+        )
+        if not (aligned or independent):
+            return None
+        keys = {PROVIDER_OBSERVATIONS[0]}
+        if saved["statement_ttm_end"] == ttm_end:
+            if aligned and (not archive or len(stats) == 1):
+                keys.update(PROVIDER_OBSERVATIONS)
+            elif independent and len(stats) == 1 and saved.get("provider_roe_period_independently_verified") is True:
+                keys.add("provider_roe_ttm_observed")
+        metrics = snapshot["metrics"]
+        restored_fields = set(restored["restored_fields"]) if restored else set()
         records = {
-            key: metrics[key] for key in keys
-            if key in metrics and metrics[key]["asof"] == asof
+            key: metrics[key] for key in PROVIDER_OBSERVATIONS if key in keys - restored_fields
+            and key in metrics and metrics[key]["asof"] == asof
             and metrics[key]["status"] == "available"
             and number(metrics[key]["value"]) is not None
         }
         shares = records["shares_marketcap_observed"]["value"]
         if shares <= 0 or not float(shares).is_integer():
+            return None
+        if independent and shares != registry.get("registered_shares"):
             return None
         return stamp, snapshot["fingerprint"], records, primary[0], sources
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -588,7 +609,7 @@ def archive_provider_observation(snapshot, folder):
     from desktop.vietnam import digest, write_json
 
     saved = snapshot.get("valuation_reconciliation", {})
-    if saved.get("status") != "verified_current_inputs" or not snapshot.get("prices"):
+    if not saved or not snapshot.get("prices"):
         return
     asof = snapshot["analysis_date"]
     candidate = _provider_candidate(
@@ -604,8 +625,9 @@ def archive_provider_observation(snapshot, folder):
         "valuation_reconciliation": {
             key: saved[key] for key in (
                 "status", "marketcap_price_aligned", "market_input_source", "statement_ttm_end",
-                "quote_comparison",
-            )
+                "quote_comparison", "provider_share_count_independently_reconciled",
+                "provider_roe_period_independently_verified", "registered_share_reconciliation",
+            ) if key in saved
         },
         "metrics": fields,
         "sources": sources,
@@ -618,7 +640,7 @@ def archive_provider_observation(snapshot, folder):
         write_json(path, receipt)
 
 
-def replay_provider_observations(ticker, asof, close, ttm_end, folder, reports=None):
+def replay_provider_observations(ticker, asof, close, ttm_end, folder, reports=None, *, needed=None, shares=None):
     """Recover comparison-only fields from a verified same-day saved snapshot."""
     from desktop.vietnam import digest, saved_quantitative_snapshots
 
@@ -644,12 +666,16 @@ def replay_provider_observations(ticker, asof, close, ttm_end, folder, reports=N
         candidate = _provider_candidate(snapshot, asof, close, ttm_end)
         if candidate:
             candidates.append(candidate)
+    wanted = set(PROVIDER_OBSERVATIONS if needed is None else needed)
+    candidates = [
+        item for item in candidates
+        if wanted.intersection(item[2])
+        and (shares is None or item[2]["shares_marketcap_observed"]["value"] == shares)
+    ]
     if not candidates:
         return None
-    # A later observation with only shares cannot erase a coherent earlier
-    # same-session set. Compare breadth first, then the observation timestamp.
     stamp, fingerprint, records, source, sources = max(
-        candidates, key=lambda item: (len(item[2]), item[0], item[1])
+        candidates, key=lambda item: (len(wanted.intersection(item[2])), len(item[2]), item[0], item[1])
     )
     return {
         "observed_at": stamp.isoformat(),
@@ -659,6 +685,6 @@ def replay_provider_observations(ticker, asof, close, ttm_end, folder, reports=N
         "source_receipts": sources,
         "fields": {
             key: {**row, "formula": row["formula"] + "; replayed same-day saved provider observation"}
-            for key, row in records.items()
+            for key, row in records.items() if key in wanted
         },
     }
