@@ -30,7 +30,9 @@ def configure(cfg):
     return cfg
 
 
-def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper=False):
+def prepare(
+    graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper=False, report_library=None
+):
     quant = None
     store = None
     book = None
@@ -48,7 +50,7 @@ def prepare(graph, ticker, asof, portfolio, cfg, callbacks, emit, *, allow_paper
             news_article_limit=cfg.get("news_article_limit", 20),
             global_news_article_limit=cfg.get("global_news_article_limit", 10),
             global_news_lookback_days=cfg.get("global_news_lookback_days", 7),
-            report_dir=cfg.get("results_dir"),
+            report_dir=report_library if report_library is not None else cfg.get("results_dir"),
         )
         graph.config["tool_vendors"] = {
             **graph.config.get("tool_vendors", {}),
@@ -520,7 +522,8 @@ def backtest_scope(cfg, emit):
             callbacks = [counter]
             self.callbacks = callbacks
             quant, runtime, portfolio, _ = prepare(
-                self, ticker, asof, portfolio, self.config, callbacks, emit
+                self, ticker, asof, portfolio, self.config, callbacks, emit,
+                report_library=cfg.get("results_dir"),
             )
             self._desktop_counter, self._desktop_runtime = counter, runtime
             from tradingagents.dataflows.config import run_config

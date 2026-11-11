@@ -292,6 +292,7 @@ def test_backtest_uses_separate_dated_bundle_and_restores_factory(tmp_path, monk
             return {}, "Hold"
 
     def source(ticker, asof, *args, **kw):
+        assert kw["report_dir"] == str(tmp_path / "results")
         q = bundle()
         q.update(
             analysis_date=asof,
@@ -319,8 +320,9 @@ def test_backtest_uses_separate_dated_bundle_and_restores_factory(tmp_path, monk
         "data_cache_dir": str(tmp_path / "cache"),
         "results_dir": str(tmp_path / "results"),
     }
+    run_dir = tmp_path / "results/backtest/run"
     with integration.backtest_scope(cfg, lambda *a: None):
-        graph = backtest.TradingAgentsGraph(config=cfg)
+        graph = backtest.TradingAgentsGraph(config={**cfg, "results_dir": str(run_dir)})
         graph.propagate("FPT.VN", "2026-10-26")
         graph.propagate("FPT.VN", "2026-10-27")
     assert backtest.TradingAgentsGraph is Original
@@ -328,7 +330,7 @@ def test_backtest_uses_separate_dated_bundle_and_restores_factory(tmp_path, monk
         ("2026-10-26", "2026-10-26"),
         ("2026-10-27", "2026-10-27"),
     ]
-    assert (tmp_path / "results/evidence/FPT.VN/2026-10-26/integration.json").exists()
+    assert (run_dir / "evidence/FPT.VN/2026-10-26/integration.json").exists()
 
 
 def test_cross_ticker_reflection_does_not_receive_current_ticker_quant(tmp_path):
