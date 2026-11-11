@@ -61,6 +61,91 @@ BONDS_MILLION = {
 }
 
 
+# Note 24.1, PDF pages 55 and 56. Each row preserves the disclosed range
+# without assigning its balance to individual months within that range.
+BANK_LOANS_MILLION = {
+    "short_term": (
+        ("VPBank", 12_176_786, "2026-10", "2027-07"),
+        ("LPBank", 5_998_122, "2027-04", "2027-08"),
+        ("Vietcombank", 4_990_988, "2026-10", "2027-06"),
+        ("VIB", 5_061_155, "2026-10", "2027-07"),
+        ("Techcombank", 5_715_734, "2026-11", "2027-07"),
+        ("BIDV", 2_454_261, "2026-10", "2027-05"),
+        ("VietinBank", 3_020_000, "2027-05", "2027-05"),
+        ("HDBank", 2_813_630, "2026-10", "2027-06"),
+        ("Bac A Bank", 2_241_130, "2027-01", "2027-04"),
+        ("SHB", 1_880_952, "2026-10", "2027-02"),
+        ("MB", 1_393_890, "2026-10", "2027-05"),
+        ("Ngân hàng TMCP Thịnh vượng và Phát triển", 1_387_655, "2026-10", "2027-07"),
+        ("Mizuho Bank", 1_296_750, "2026-11", "2026-11"),
+        ("TPBank", 99_543, "2026-11", "2026-12"),
+        ("SeABank", 499_621, "2027-05", "2027-05"),
+    ),
+    "current_portion_of_long_term": (
+        ("Khoản vay hợp vốn 3", 1_280_000, "2027-08", "2027-08"),
+        ("Vietcombank", 3_551_692, "2027-06", "2027-07"),
+        ("MB", 356_250, "2027-05", "2027-05"),
+        ("HDBank", 79_430, "2027-05", "2027-06"),
+        ("VPBank", 474_131, "2027-06", "2027-06"),
+    ),
+    "long_term": (
+        ("Khoản vay hợp vốn 3", 20_120_000, "2030-07", "2030-07"),
+        ("Khoản vay hợp vốn 4", 19_500_000, "2030-09", "2030-09"),
+        ("Vietcombank", 13_226_980, "2028-09", "2032-07"),
+        ("MB", 1_268_750, "2028-02", "2030-11"),
+        ("HDBank", 2_740_081, "2028-03", "2035-12"),
+        ("TPBank", 3_299_774, "2027-12", "2027-12"),
+        ("VPBank", 193_659, "2028-03", "2028-03"),
+        ("VietinBank", 1_791_337, "2031-07", "2032-12"),
+        ("BIDV", 2_866_500, "2031-07", "2031-07"),
+    ),
+}
+
+
+def _bank_and_partner_details(balances, bonds_current, bonds_long_term):
+    subtotals = {
+        category: sum(row[1] for row in rows) for category, rows in BANK_LOANS_MILLION.items()
+    }
+    partner_current, partner_long, lease = 2_400_550, 1_000_000, 40_735
+    if (
+        subtotals != {"short_term": 51_030_217, "current_portion_of_long_term": 5_741_503,
+                      "long_term": 65_007_081}
+        or subtotals["short_term"] + subtotals["current_portion_of_long_term"]
+        + partner_current + bonds_current != balances["short_term_borrowings"]
+        or subtotals["long_term"] + partner_long + bonds_long_term + lease
+        != balances["long_term_borrowings"]
+    ):
+        raise ValueError("VHM bank and partner borrowing notes do not reconcile")
+    return {
+        "bank_total_vnd": sum(subtotals.values()) * 1_000_000,
+        "bank_subtotals_vnd": {k: v * 1_000_000 for k, v in subtotals.items()},
+        "bank_rows": [
+            {"category": category, "lender": lender, "carrying_vnd": amount * 1_000_000,
+             "currency": "USD" if lender == "Mizuho Bank" else "VND",
+             "principal_due_from": start, "principal_due_to": end,
+             "pdf_page": 55 if category == "short_term" else 56}
+            for category, rows in BANK_LOANS_MILLION.items()
+            for lender, amount, start, end in rows
+        ],
+        "partner_current_carrying_vnd": partner_current * 1_000_000,
+        "partner_current_narrative_vnd": 2_408_000_000_000,
+        "partner_current_due_months": ["2026-09", "2027-01", "2027-03"],
+        "partner_current_rate_pct": [8, 12],
+        "partner_long_term_carrying_vnd": partner_long * 1_000_000,
+        "partner_long_term_due_month": "2027-12",
+        "partner_long_term_rate_pct": 9.5,
+        "partner_note_pdf_page": 57,
+        "finance_lease_carrying_vnd": lease * 1_000_000,
+        "scope": (
+            "Bank rows preserve reported principal maturity ranges or month. VND carrying values "
+            "also apply to the USD row. A range does not allocate individual payments to months. "
+            "Partner carrying amounts come from Note 24. Note 24.2 separately gives a different "
+            "current narrative total with several months, without a breakdown by month. "
+            "No later repayments, interest cash flows or undated allocations are inferred."
+        ),
+    }
+
+
 def load(ticker, asof, metrics):
     if ticker != "VHM" or asof < VHM_Q3_2026_AVAILABLE:
         return {}
@@ -103,6 +188,7 @@ def load(ticker, asof, metrics):
         "bond_current_carrying_vnd": current * 1_000_000,
         "bond_long_term_carrying_vnd": (total - current) * 1_000_000,
         "reported_bond_rows": sum(map(len, BONDS_MILLION.values())),
+        "bank_and_partner": _bank_and_partner_details(balances, current, total - current),
         "maturities": [
             {"month": month, "carrying_vnd": amount * 1_000_000, "pdf_pages": sorted(pages[month])}
             for month, amount in sorted(monthly.items())

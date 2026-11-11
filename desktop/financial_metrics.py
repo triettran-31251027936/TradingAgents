@@ -215,7 +215,8 @@ def extend(book, add, field):
         "cash_less_borrowings",
         cash - short - long if all(v is not None for v in (cash, short, long)) else None,
         "VND",
-        "Cash and equivalents - short-term borrowings - long-term borrowings; excludes financial investments, restricted cash and leases",
+        "Cash and equivalents minus reported short-term and long-term borrowings. "
+        "No separate adjustment for leases, financial investments or restricted cash.",
         source,
         bdate,
     )

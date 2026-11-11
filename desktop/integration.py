@@ -257,6 +257,25 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                 pages = ", ".join(map(str, row["pdf_pages"]))
                 text += f"| {cell(row['month'])} | {row['carrying_vnd']:,} | {pages} |\n"
             text += "\n" + cell(notes["scope"]) + "\n\n"
+            loan_notes = notes.get("bank_and_partner")
+            if loan_notes:
+                text += "### Kỳ hạn trả gốc vay ngân hàng và đối tác\n\n"
+                text += f"Tổng số dư vay ngân hàng {loan_notes['bank_total_vnd']:,} VND.\n\n"
+                text += "| Bên cho vay | Nguyên tệ | Giá trị ghi sổ (VND) | Kỳ hạn trả gốc | Trang PDF |\n|---|---|---:|---|---|\n"
+                for row in loan_notes["bank_rows"]:
+                    start, end = row["principal_due_from"], row["principal_due_to"]
+                    due = start if start == end else f"{start} → {end}"
+                    text += f"| {cell(row['lender'])} | {row['currency']} | {row['carrying_vnd']:,} | {due} | {row['pdf_page']} |\n"
+                months = ", ".join(loan_notes["partner_current_due_months"])
+                text += (
+                    f"\nThuyết minh 24.2 ghi số vay đối tác ngắn hạn "
+                    f"{loan_notes['partner_current_narrative_vnd']:,} VND, "
+                    f"kỳ hạn vào các tháng {months}. Số dư đến hạn trả ở thuyết minh 24 "
+                    f"là {loan_notes['partner_current_carrying_vnd']:,} VND. "
+                    f"Vay đối tác dài hạn {loan_notes['partner_long_term_carrying_vnd']:,} VND "
+                    f"đáo hạn tháng {loan_notes['partner_long_term_due_month']}.\n\n"
+                    + cell(loan_notes["scope"]) + "\n\n"
+                )
 
         if q.get("bank_reconciliation"):
             text += "\n### Chỉ tiêu ngân hàng\n\nTỷ số kế toán dư nợ/tiền gửi không phải LDR theo quy định NHNN. Tỷ số provider được giữ riêng, có thể mang dấu chi phí/dự phòng âm; phương pháp và cửa sổ tính chưa được đối soát từ thuyết minh. TTM tự tính chỉ dùng các quý liên tiếp đã đối chiếu với báo cáo năm.\n\n"

@@ -247,6 +247,15 @@ def test_vhm_bond_note_requires_publication_and_matching_balance_sheet():
     assert notes["reported_bond_rows"] == 37
     assert notes["bond_carrying_vnd"] == 115_402_180_000_000
     assert notes["bond_current_carrying_vnd"] == 6_078_936_000_000
+    loans = notes["bank_and_partner"]
+    assert loans["bank_total_vnd"] == 121_778_801_000_000
+    assert len(loans["bank_rows"]) == 29
+    mb = next(row for row in loans["bank_rows"] if row["lender"] == "MB"
+              and row["category"] == "long_term")
+    assert (mb["principal_due_from"], mb["principal_due_to"], mb["carrying_vnd"]) == (
+        "2028-02", "2030-11", 1_268_750_000_000,
+    )
+    assert loans["partner_current_narrative_vnd"] != loans["partner_current_carrying_vnd"]
     assert notes["maturities"][0] == {
         "month": "2026-11", "carrying_vnd": 2_088_920_000_000, "pdf_pages": [58]
     }
