@@ -52,7 +52,7 @@ def test_rights_listing_filters_dates_without_assuming_sort_order(tmp_path, monk
     <div id="divlistArticlesTCPH_THQ"><table><tbody>
       <tr><td>1</td><td>01/05/2024</td><td><a href="/ad/123">VHM: Cổ tức bằng tiền</a></td></tr>
       <tr><td>2</td><td>30/06/2026</td><td><a href="/ad/197086">VHM: Chi trả cổ tức bằng tiền</a></td></tr>
-      <tr><td>3</td><td>30/06/2026</td><td><a href="/ad/124">VHM: Chi trả cổ tức bằng cổ phiếu</a></td></tr>
+      <tr><td>3</td><td>01/06/2026</td><td><a href="/ad/124">VHM: Chi trả cổ tức bằng cổ phiếu</a></td></tr>
     </tbody></table></div>
     """
     monkeypatch.setattr(cash_dividends, "fetch_registry", lambda *_: ("https://vsdc.vn/vi/s-detail/6951", page))
@@ -88,4 +88,35 @@ def test_trailing_yield_requires_stable_share_count_and_same_day_anchored_close(
     assert trailing_yield({**data, "records": [notice, notice]}, registry, proof, close)["value"] is None
     registry["registration_history"][1]["change"] = 1_000_000
     withheld = trailing_yield(data, registry, proof, close)
-    assert withheld["value"] is None and "rebasing" in withheld["formula"]
+    assert withheld["value"] is None and "do not match" in withheld["formula"]
+
+
+def test_stock_dividend_rebases_only_when_registered_change_matches_notice():
+    from desktop.cash_dividends import trailing_yield
+
+    raw = NOTICE.replace("bằng tiền", "bằng cổ phiếu").replace(
+        "Tỷ lệ thực hiện: 60%/cổ phiếu (01 cổ phiếu được nhận 6.000 đồng)",
+        "Tỷ lệ thực hiện: 1:1 (Người sở hữu 01 cổ phiếu được nhận 01 cổ phiếu mới)",
+    ).replace("30/06/2026", "07/08/2026")
+    cutoff = datetime(2026, 11, 10, 23, tzinfo=TZ)
+    notice = parse_notice(raw, "VHM", "VN000000VHM0", date(2026, 8, 7), cutoff, stock=True)
+    assert (notice["held"], notice["issued"]) == (1, 1)
+    event = {"date": "2026-08-25", "change": 4_107_412_004, "reason": "Trả cổ tức bằng cổ phiếu"}
+    balance = {"notice_registration_change": event, "notice_published": "2026-08-25T15:24:39+07:00"}
+    rights = {"records": [notice], "balance_notice": balance}
+    cash = {"record_date": "2026-06-30", "scheduled_payment_date": "2026-07-22",
+            "cash_vnd_per_eligible_share": 6000}
+    data = {"asof": "2026-11-10", "status": "available", "records": [cash], "stock_rights": rights}
+    registry = {"registration_history": [event], "registered_shares": 8_214_824_008}
+    close = {"status": "anchored", "date": "2026-11-10", "observed_close_vnd": 62_000}
+    metric = trailing_yield(data, registry, {"verified": True}, close)
+    assert metric["value"] == pytest.approx(3000 / 62000)
+    assert "3000 VND/share" in metric["formula"]
+    for corrupt in [
+        {"records": [notice]},
+        {**rights, "records": [{**notice, "issued": 2}]},
+        {**rights, "balance_notice": {**balance, "notice_published": "2026-11-12T00:00:00+07:00"}},
+    ]:
+        assert trailing_yield({**data, "stock_rights": corrupt}, registry, {"verified": True}, close)["value"] is None
+    transition_cash = {**cash, "record_date": "2026-08-10"}
+    assert trailing_yield({**data, "records": [cash, transition_cash]}, registry, {"verified": True}, close)["value"] is None

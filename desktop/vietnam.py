@@ -30,7 +30,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 45
+VERSION = 46
 VERIFIED_SNAPSHOT_PREFIX = "Verified canonical VN snapshot (same source as other VN tools):\n"
 LOCK = threading.Lock()
 
@@ -1185,6 +1185,27 @@ def load(
                 }
                 for row in cash_dividend_evidence["records"]
             )
+            stock_rights = cash_dividend_evidence.get("stock_rights", {})
+            sources.extend(
+                {
+                    "name": "Công bố cổ tức bằng cổ phiếu · VSDC",
+                    "url": row["url"],
+                    "published": row["published"],
+                    "retrieved_at": cash_dividend_evidence["observed_at"],
+                    "sha256": row["sha256"],
+                    "status": "available",
+                }
+                for row in stock_rights.get("records", [])
+            )
+            if balance := stock_rights.get("balance_notice"):
+                sources.append({
+                    "name": "Công bố đối chiếu cổ phiếu sau cổ tức · VSDC",
+                    "url": balance["notice_url"],
+                    "published": balance["notice_published"],
+                    "retrieved_at": cash_dividend_evidence["observed_at"],
+                    "sha256": balance["notice_sha256"],
+                    "status": "available",
+                })
         bundle = {
             "exchange": exchange,
             "company_name": instrument.get("enOrganName") or instrument.get("organName") or ticker,

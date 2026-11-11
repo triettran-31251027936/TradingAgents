@@ -10,7 +10,9 @@ from unicodedata import normalize
 import requests
 from bs4 import BeautifulSoup
 
-from desktop.share_registry import ROOT, _notice_time, fetch_registry, integer, parse, response_text, sanitized_page
+from desktop.share_registry import (
+    ROOT, _dated_registration, _notice_time, fetch_registry, integer, parse, response_text, sanitized_page,
+)
 from desktop.vietnam import TZ, symbol, write_json
 
 SCOPE = (
@@ -30,31 +32,45 @@ def cash_title(title, ticker):
     return title.startswith(ticker + ":") and bool(re.search(r"cổ tức.*\btiền\b", title, re.I))
 
 
-def parse_notice(raw, ticker, isin, record_date, cutoff):
+def stock_title(title, ticker):
+    return title.startswith(ticker + ":") and bool(re.search(r"cổ tức.*bằng cổ phiếu", title, re.I))
+
+
+def parse_notice(raw, ticker, isin, record_date, cutoff, *, stock=False):
     page = sanitized_page(raw)
     title = text(page.select_one("h3.title-category"))
     published = _notice_time(page.select_one(".time-newstcph"))
     body = text(page.select_one(".content-category"))
     if published > cutoff:
         return None
-    if not cash_title(title, ticker) or not re.search(rf"Mã ISIN:\s*{re.escape(isin)}\b", body):
+    title_matches = stock_title if stock else cash_title
+    if not title_matches(title, ticker) or not re.search(rf"Mã ISIN:\s*{re.escape(isin)}\b", body):
         raise ValueError("Dividend issuer identity differs from registry")
     if not re.search(rf"Mã chứng khoán:\s*{re.escape(ticker)}\b", body):
         raise ValueError("Dividend ticker differs from registry")
     record = re.findall(r"Ngày đăng ký cuối cùng:\s*(\d{2}/\d{2}/\d{4})", body)
+    if len(record) != 1 or datetime.strptime(record[0], "%d/%m/%Y").date() != record_date:
+        raise ValueError("Dividend record date differs from registry listing")
+    common = {
+        "title": title, "published": published.isoformat(), "record_date": record_date.isoformat(),
+        "sha256": hashlib.sha256(str(page).encode()).hexdigest(),
+    }
+    if stock:
+        ratio = re.findall(r"Tỷ lệ thực hiện:\s*(\d+)\s*:\s*(\d+)\b", body, re.I)
+        if len(ratio) != 1 or min(map(int, ratio[0])) <= 0:
+            raise ValueError("Stock dividend requires an unambiguous positive whole-share ratio")
+        held, issued = map(int, ratio[0])
+        return {**common, "held": held, "issued": issued}
     payment = re.findall(r"Ngày thanh toán:\s*(\d{2}/\d{2}/\d{4})", body)
     amounts = re.findall(r"\b0?1 cổ phiếu được nhận\s+([\d.]+)\s+đồng\b", body, re.I)
-    if len(record) != 1 or len(payment) != 1 or len(amounts) != 1:
+    if len(payment) != 1 or len(amounts) != 1:
         raise ValueError("Missing or ambiguous cash entitlement fields")
-    listed = datetime.strptime(record[0], "%d/%m/%Y").date()
     scheduled = datetime.strptime(payment[0], "%d/%m/%Y").date()
     amount = integer(amounts[0])
-    if listed != record_date or scheduled < listed or amount <= 0:
+    if scheduled < record_date or amount <= 0:
         raise ValueError("Cash entitlement contradicts registry date or amount")
     return {
-        "title": title, "published": published.isoformat(), "record_date": listed.isoformat(),
-        "scheduled_payment_date": scheduled.isoformat(), "cash_vnd_per_eligible_share": amount,
-        "sha256": hashlib.sha256(str(page).encode()).hexdigest(),
+        **common, "scheduled_payment_date": scheduled.isoformat(), "cash_vnd_per_eligible_share": amount,
     }
 
 
@@ -64,7 +80,7 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
     target = date.fromisoformat(asof)
     start = target - timedelta(days=365)
     cutoff = min(now, datetime.combine(target, time.max, TZ))
-    path = Path(cache_dir) / "vn-registry" / ticker / (asof + ".cash-dividends.json")
+    path = Path(cache_dir) / "vn-registry" / ticker / (asof + ".cash-dividends-v2.json")
     result = {"status": "unavailable", "asof": asof, "scope": SCOPE, "records": [],
               "warnings": [], "record_window_start": start.isoformat(), "observed_at": now.isoformat()}
     if target > now.date():
@@ -85,6 +101,7 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
         token = page.select_one('meta[name="__VPToken"]')
         headers = {"__VPToken": token["content"]} if token else {}
         candidates = {}
+        stock_candidates = {}
         for index in range(1, MAX_PAGES + 1):
             table = listing.select_one("table")
             if table is None:
@@ -95,14 +112,18 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
                     raise ValueError("Invalid VSDC corporate-rights row")
                 day = datetime.strptime(text(cells[1]), "%d/%m/%Y").date()
                 link = cells[2].select_one("a[href]")
-                if start < day <= target and cash_title(text(link), ticker):
+                title = text(link)
+                cash, stock = cash_title(title, ticker), stock_title(title, ticker)
+                if start < day <= target and (cash or stock):
                     href = link["href"]
                     if not re.fullmatch(r"/(?:vi/)?ad1?/[1-9]\d{0,8}", href):
                         raise ValueError("Invalid VSDC cash-dividend notice link")
                     url = ROOT + href
-                    if url in candidates and candidates[url] != day:
-                        raise ValueError("Conflicting VSDC cash-dividend record dates")
-                    candidates[url] = day
+                    for bucket, matches in ((candidates, cash), (stock_candidates, stock)):
+                        if matches:
+                            if url in bucket and bucket[url] != day:
+                                raise ValueError("Conflicting VSDC dividend record dates")
+                            bucket[url] = day
             if not listing.select_one("#next"):
                 break
             if index == MAX_PAGES:
@@ -124,6 +145,28 @@ def load(ticker, asof, cache_dir, *, now=None, session=None):
                     result["records"].append({**notice, "url": url})
             except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
                 result["warnings"].append("VSDC cash-dividend notice withheld: " + type(exc).__name__)
+        if result["records"]:
+            first_cash = min(row["record_date"] for row in result["records"])
+            relevant = [(url, day) for url, day in stock_candidates.items() if day.isoformat() >= first_cash]
+            stock_rights = {"records": [], "warnings": []}
+            if len(relevant) > MAX_NOTICES:
+                stock_rights["warnings"].append("VSDC stock-dividend notice limit reached")
+            for url, day in relevant[:MAX_NOTICES]:
+                try:
+                    raw_notice = response_text(session.get(url, timeout=(8, 20)))
+                    notice = parse_notice(raw_notice, ticker, identity["isin"], day, cutoff, stock=True)
+                    if notice is not None:
+                        stock_rights["records"].append({**notice, "url": url})
+                except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+                    stock_rights["warnings"].append("VSDC stock-dividend notice withheld: " + type(exc).__name__)
+            if stock_rights["records"] and not stock_rights["warnings"]:
+                try:
+                    balance, _ = _dated_registration(page, identity, ticker, asof, session)
+                    if datetime.fromisoformat(balance["notice_published"]) <= cutoff:
+                        stock_rights["balance_notice"] = balance
+                except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+                    stock_rights["warnings"].append("VSDC stock-dividend registration unconfirmed: " + type(exc).__name__)
+            result["stock_rights"] = stock_rights
         result["status"] = "partial" if result["warnings"] else "available" if result["records"] else "empty_sample"
         write_json(path, result)
     except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
@@ -149,13 +192,50 @@ def metrics(data):
     }
 
 
+def rebase_entitlements(rows, registry, rights, asof):
+    first = min(row["record_date"] for row in rows)
+    changes = [
+        event for event in registry["registration_history"]
+        if event["change"] != 0 and first <= event["date"] <= asof
+    ]
+    notices = rights.get("records", [])
+    if rights.get("warnings"):
+        raise ValueError("Stock-dividend rights could not be verified")
+    if not changes and not notices:
+        return sum(row["cash_vnd_per_eligible_share"] for row in rows), None
+    if len(changes) != 1 or len(notices) != 1:
+        raise ValueError("Intervening registration changes and stock-dividend rights do not match")
+    event, = changes
+    notice, = notices
+    balance = rights.get("balance_notice") or {}
+    change = event["change"]
+    after = registry["registered_shares"]
+    record = notice["record_date"]
+    if (
+        balance.get("notice_registration_change") != event
+        or event.get("reason", "").casefold() != "trả cổ tức bằng cổ phiếu"
+        or type(change) is not int or not 0 < change < after
+        or not first < record < event["date"] <= balance["notice_published"][:10] <= asof
+        or (after - change) * notice["issued"] != change * notice["held"]
+        or any(record <= row["record_date"] <= event["date"] for row in rows)
+    ):
+        raise ValueError("Stock-dividend timing, ratio or registered-share change does not reconcile")
+    factor = (after - change) / after
+    total = sum(
+        row["cash_vnd_per_eligible_share"] * (factor if row["record_date"] < record else 1)
+        for row in rows
+    )
+    return total, factor
+
+
 def trailing_yield(data, registry, share_proof, close_basis):
-    """Price-relative entitlement yield on an unchanged registered-share basis."""
+    """Price-relative entitlement yield on the reconciled closing share basis."""
     asof = data["asof"]
     rows = data["records"]
     record_dates = [row["record_date"] for row in rows]
     reason = None
     total = None
+    factor = None
     close = close_basis.get("observed_close_vnd")
     if data["status"] != "available" or not rows:
         reason = "No complete parsed VSDC cash-entitlement sample"
@@ -165,21 +245,21 @@ def trailing_yield(data, registry, share_proof, close_basis):
         reason = "At least one published payment is still scheduled after the analysis date"
     elif not share_proof.get("verified") or not registry or not registry.get("registration_history"):
         reason = "Common-share basis is unverified"
-    elif any(
-        event["change"] != 0 and min(record_dates) <= event["date"] <= asof
-        for event in registry["registration_history"]
-    ):
-        reason = "Registration changed on or after a cash entitlement date; per-share rebasing is required"
     elif close_basis.get("status") != "anchored" or close_basis.get("date") != asof or not close or close <= 0:
         reason = "No independently anchored closing price for the analysis date"
     else:
-        total = sum(row["cash_vnd_per_eligible_share"] for row in rows)
+        try:
+            total, factor = rebase_entitlements(rows, registry, data.get("stock_rights", {}), asof)
+        except ValueError as exc:
+            reason = str(exc)
     formula = (
         "Sum of pre-tax VSDC cash entitlements with record dates in the prior 365 days "
         "and scheduled payment by analysis date / independently anchored closing price. "
-        "Requires a verified share basis with no intervening registration changes. "
+        "Requires a stable share basis or a stock dividend reconciled to a VSDC registration notice. "
         "Scheduled entitlements are not proof of receipt or reinvestment."
     )
+    if factor is not None:
+        formula += f" Pre-event entitlements multiplied by {factor:.10g}; rebased cash total {total:.10g} VND/share."
     return {
         "value": total / close if total is not None else None,
         "unit": "fraction",
