@@ -657,3 +657,33 @@ def test_bsr_buy_sell_round_trip_requires_separate_approvals_and_t2(tmp_path, mo
         now=datetime(2026, 11, 6, 15, tzinfo=TZ),
     )
     assert settled_sale["available_cash"] == pytest.approx(3089750)
+
+
+def test_stale_unapproved_proposal_expires_without_market_sync(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    import desktop.practice as practice
+
+    current = datetime.now(TZ)
+    store = PracticeStore(tmp_path)
+    preview = proposal(store, "BSR.VN")
+    assert store.snapshot()["orders"][0]["status"] == "PROPOSED"
+
+    class Tomorrow(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return (current + timedelta(days=1)).astimezone(tz)
+
+    monkeypatch.setattr(practice, "datetime", Tomorrow)
+    order_id = preview["id"]
+    expired = store.preview(order_id)
+    assert expired["status"] == "EXPIRED"
+    assert expired["preview_hash"] != preview["preview_hash"]
+    book = store.snapshot()
+    assert book["orders"][0]["status"] == "EXPIRED"
+    assert book["orders"][0]["approved_at"] is None
+    assert book["available_cash"] == 3_000_000 and not book["positions"]
+    with pytest.raises(ValueError, match="sang ngày mới"):
+        sign(store, preview, monkeypatch)
+    with pytest.raises(ValueError, match="hết hạn"):
+        store.reject(order_id)

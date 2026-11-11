@@ -202,8 +202,16 @@ class PracticeStore(Store):
             CREATE TABLE IF NOT EXISTS marks(ticker TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS processed_approvals(order_id TEXT PRIMARY KEY);""")
 
+    @staticmethod
+    def proposal_expired(order, today):
+        return order["analysis_date"] < today
+
     def snapshot(self, db=None):
         book = super().snapshot(db)
+        today = datetime.now(TZ).date().isoformat()
+        for order in book["orders"]:
+            if order["status"] == "PROPOSED" and self.proposal_expired(order, today):
+                order["status"] = "EXPIRED"
         book.update(
             mode="local_backtrader_live_minutes",
             engine="Backtrader / BackBroker · real completed minute bars",
@@ -276,6 +284,10 @@ class PracticeStore(Store):
 
     def preview(self, order_id, db=None):
         preview = super().preview(order_id, db)
+        if preview["status"] == "PROPOSED" and self.proposal_expired(
+            preview["order"], datetime.now(TZ).date().isoformat()
+        ):
+            preview["status"] = "EXPIRED"
         preview["matching"] = (
             "TIỀN ẢO · BackBroker: chỉ nến phút đã đóng sau lúc bạn duyệt; tối đa1% volume phút, lô100; bỏ phiên đấu giá; hết hạn cuối phiên đủ điều kiện đầu tiên. Không phải lệnh tại sàn thật."
         )
@@ -295,6 +307,11 @@ class PracticeStore(Store):
             "Đã duyệt lệnh TIỀN ẢO. Chờ nến phút thật sau thời điểm duyệt; chưa có lệnh tại sàn thật."
         )
         return result
+
+    def reject(self, order_id):
+        if self.preview(order_id)["status"] == "EXPIRED":
+            raise ValueError("Đề xuất đã hết hạn; không cần từ chối.")
+        return super().reject(order_id)
 
     def advance(self, *args, **kwargs):
         raise ValueError(
