@@ -319,3 +319,29 @@ def test_operating_margin_requires_both_flows_to_reconcile():
     annual["Operating profit/(loss)"] = 25
     calculate()
     assert metrics["operating_margin_ttm"][0] is None
+
+
+def test_working_capital_and_net_borrowings_preserve_distinct_signs_and_periods():
+    from desktop.financial_metrics import extend
+
+    cash = section([10, 30, 60, 100])
+    balance = section([None] * 4)
+    balance["quarters"][-1].update({
+        "Cash and cash equivalents": 15,
+        "Short-term borrowings": 25,
+        "Long-term borrowings": 35,
+    })
+    book = {"income": section([None] * 4), "cash": cash, "balance": balance}
+    metrics = {}
+
+    def field(_book, _kind, title, *_aliases):
+        return "value" if title == "Increase/(decrease) in payables" else title
+
+    extend(book, lambda name, *values: metrics.update({name: values}), field)
+    assert metrics["cfo_payables_change_ttm"][0] == 100
+    assert metrics["cfo_payables_change_quarter"][0] == 40
+    assert metrics["net_borrowings"][0] == 45
+    assert metrics["cash_less_borrowings"][0] == -45
+    cash["quarters"].append(cash["quarters"][-1].copy())
+    extend(book, lambda name, *values: metrics.update({name: values}), field)
+    assert metrics["cfo_payables_change_quarter"][0] is None

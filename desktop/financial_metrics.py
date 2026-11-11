@@ -64,6 +64,16 @@ def reconcile(section, key):
     }
 
 
+def quarter_flow(rows, key, year, quarter, basis):
+    value = number(rows.get((year, quarter), {}).get(key))
+    if value is None:
+        return None
+    if basis == "ytd" and quarter > 1:
+        prior = number(rows.get((year, quarter - 1), {}).get(key))
+        return value - prior if prior is not None else None
+    return value
+
+
 def ttm(section, key):
     proof = reconcile(section, key)
     if proof["basis"] == "unverified":
@@ -82,20 +92,8 @@ def ttm(section, key):
         return None, proof, []
     serial = end[0] * 4 + end[1] - 1
     keys = [((n // 4), n % 4 + 1) for n in range(serial - 3, serial + 1)]
-    values = []
-    for year, q in keys:
-        row = rows.get((year, q))
-        value = number(row.get(key)) if row else None
-        if value is None:
-            return None, proof, keys
-        if proof["basis"] == "ytd" and q > 1:
-            previous = rows.get((year, q - 1))
-            prior = number(previous.get(key)) if previous else None
-            if prior is None:
-                return None, proof, keys
-            value -= prior
-        values.append(value)
-    return sum(values), proof, keys
+    values = [quarter_flow(rows, key, year, quarter, proof["basis"]) for year, quarter in keys]
+    return (sum(values) if all(value is not None for value in values) else None), proof, keys
 
 
 def reconciled_assets(book, field, target):
@@ -140,6 +138,10 @@ def extend(book, add, field):
                 "Net cash from operating activities",
             ),
         ),
+        ("cfo_receivables_change_ttm", "cash", ("(Increase)/decrease in receivables",)),
+        ("cfo_inventory_change_ttm", "cash", ("(Increase)/decrease in inventories",)),
+        ("cfo_payables_change_ttm", "cash", ("Increase/(decrease) in payables",)),
+        ("cfo_prepaid_expense_change_ttm", "cash", ("(Increase)/decrease in prepaid expenses",)),
         ("capex_signed_ttm", "cash", ("Purchases of fixed assets and other long term assets",)),
         ("pretax_profit_ttm", "income", ("Net accounting profit/(loss) before tax",)),
         ("interest_expense_signed_ttm", "income", ("Interest expenses",)),
@@ -163,6 +165,28 @@ def extend(book, add, field):
             source,
             field_stamp,
         )
+
+    payables = "cfo_payables_change_ttm"
+    window = windows[payables]
+    cash_rows = book["cash"]["quarters"]
+    cash_by_period = {period(row): row for row in cash_rows}
+    cash_stamp = f"{last('cash').get('yearReport', '?')}-Q{last('cash').get('lengthReport', '?')} public:{str(last('cash').get('publicDate', ''))[:10]}"
+    latest_payables_change = None
+    if values[payables] is not None and window and len(cash_rows) == len(cash_by_period):
+        year, quarter = window[-1]
+        latest_payables_change = quarter_flow(
+            cash_by_period, key("cash", "Increase/(decrease) in payables"),
+            year, quarter, proof[payables]["basis"],
+        )
+    add(
+        "cfo_payables_change_quarter",
+        latest_payables_change,
+        "VND",
+        "Signed payables adjustment in the indirect cash-flow statement for the latest discrete quarter; "
+        "a contribution to reported operating cash flow, distinct from trade-payables balances or customer receipts.",
+        source,
+        cash_stamp,
+    )
 
     def ratio(a, b):
         return a / b if a is not None and b is not None and b > 0 else None
@@ -259,11 +283,20 @@ def extend(book, add, field):
         source,
         bdate,
     )
+    net_borrowings = gross - cash if gross is not None and cash is not None and cash >= 0 else None
     add(
         "cash_less_borrowings",
-        cash - short - long if all(v is not None for v in (cash, short, long)) else None,
+        -net_borrowings if net_borrowings is not None else None,
         "VND",
-        "Cash and equivalents minus reported short-term and long-term borrowings. "
+        "Cash and equivalents minus reported borrowings. A negative balance means borrowings exceed cash.",
+        source,
+        bdate,
+    )
+    add(
+        "net_borrowings",
+        net_borrowings,
+        "VND",
+        "Reported short- and long-term borrowings minus cash and equivalents. Positive means borrowings exceed cash. "
         "No separate adjustment for leases, financial investments or restricted cash.",
         source,
         bdate,
