@@ -216,3 +216,51 @@ def test_global_news_reads_dated_rss_and_preserves_configured_upstream(tool_bund
         assert not past["vneconomy_rss"]["records"]
     assert seen[0] == (day, 1, 1)
     assert "vietnam" not in vendors
+
+
+def test_prediction_market_fed_fallback_and_exact_archive(tool_bundle, tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+    import requests
+    from desktop import prediction_markets as pm
+    from tradingagents.dataflows import router
+
+    day = tool_bundle["analysis_date"]
+    observed = datetime.fromisoformat(f"{day}T16:00:00+07:00")
+    base = {"closed": False, "endDate": (observed + timedelta(days=30)).isoformat(),
+            "outcomes": '["Yes","No"]', "outcomePrices": '["0.32","0.68"]',
+            "volumeNum": 500}
+    called = []
+
+    def response(session, url, params):
+        called.append(url)
+        if url == pm.SEARCH:
+            raise requests.Timeout()
+        assert params["tag_slug"] == "fed"
+        return [
+            {"title": "Fed policy", "slug": "fed-test", "markets": [
+                {**base, "id": "1", "question": "Fed rate cut in December?"},
+                {**base, "id": "2", "question": "Fed rate hike in December?"},
+                {**base, "id": "3", "question": "Fed rate cut in December?", "closed": True},
+            ]},
+        ]
+
+    monkeypatch.setattr(pm, "_get", response)
+    result = json.loads(pm.tool("Fed rate cut in December", 3, day, tmp_path, now=observed))
+    assert result["source"] == pm.EVENTS and result["status"] == "available"
+    assert [row["id"] for row in result["markets"]] == ["1"]
+    assert result["markets"][0]["outcomes"][0]["price"] == 0.32
+    assert called == [pm.SEARCH, pm.EVENTS]
+    next_day = observed + timedelta(days=1)
+    monkeypatch.setattr(pm, "_get", lambda *args: pytest.fail("Historical tools must not query live markets"))
+    replay = json.loads(pm.tool("Fed rate cut in December", 1, day, tmp_path, now=next_day))
+    assert replay["replayed"] and replay["observed_at"] == result["observed_at"]
+    other = json.loads(pm.tool("Fed rate hike", 1, day, tmp_path, now=next_day))
+    assert other["status"] == "withheld"
+
+    vendors = router.VENDOR_METHODS["get_prediction_markets"]
+    original = vendors["polymarket"]
+    with vietnam.vendor_scope(tool_bundle, tmp_path):
+        assert vendors["polymarket"] is not original
+        with pytest.raises(ValueError, match="after"):
+            vendors["polymarket"]("Fed", 1, next_day.date().isoformat())
+    assert vendors["polymarket"] is original

@@ -1264,6 +1264,8 @@ def vendor_scope(bundle, cache_dir=None):
     from tradingagents.dataflows import router
 
     original_snapshot = tools.build_verified_market_snapshot
+    prediction_vendors = router.VENDOR_METHODS["get_prediction_markets"]
+    original_prediction = prediction_vendors["polymarket"]
     prior = {}
 
     def guard(ticker):
@@ -1405,7 +1407,17 @@ def vendor_scope(bundle, cache_dir=None):
         "get_news": news,
         "get_global_news": global_news,
     }
+    def prediction(topic, limit=None, asof=None):
+        from desktop.prediction_markets import tool
+
+        day = asof or bundle["analysis_date"]
+        if day > bundle["analysis_date"]:
+            raise ValueError("Prediction market date is after the analysis snapshot")
+        return tool(topic, limit, day, cache_dir)
+
     try:
+        if cache_dir is not None:
+            prediction_vendors["polymarket"] = prediction
         for method, fn in methods.items():
             prior[method] = router.VENDOR_METHODS[method].get("vietnam")
             router.VENDOR_METHODS[method]["vietnam"] = fn
@@ -1422,6 +1434,7 @@ def vendor_scope(bundle, cache_dir=None):
         yield
     finally:
         tools.build_verified_market_snapshot = original_snapshot
+        prediction_vendors["polymarket"] = original_prediction
         for method, old in prior.items():
             if old is None:
                 router.VENDOR_METHODS[method].pop("vietnam", None)
