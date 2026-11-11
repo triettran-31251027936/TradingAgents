@@ -30,7 +30,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 34
+VERSION = 35
 VERIFIED_SNAPSHOT_PREFIX = "Verified canonical VN snapshot (same source as other VN tools):\n"
 LOCK = threading.Lock()
 
@@ -991,7 +991,13 @@ def load(
                     "warnings": [type(exc).__name__],
                 }
             observed = None
-            if insider_dealings["status"] == "withheld" and asof < datetime.now(TZ).date().isoformat():
+            first_observed = insider_dealings.get("first_observed_at") or ""
+            exact_dealings = (
+                insider_dealings["status"] == "available"
+                and first_observed[:10] == asof
+                and insider_dealings.get("source_total") == insider_dealings.get("retrieved_count")
+            )
+            if not exact_dealings and asof < datetime.now(TZ).date().isoformat():
                 observed = insider_vietnam.replay_observed(
                     ticker + ".VN", asof, folder, Path(report_dir) if report_dir else None
                 )
@@ -1006,7 +1012,11 @@ def load(
             insider_dealings = insider_vietnam.corroborate_historical(
                 insider_dealings, transfers, cache_dir
             )
-            if observed and observed["asof"] != asof:
+            prior_registration = insider_dealings.get("registration_snapshot", {}).get("observed_at")
+            if observed and observed["asof"] != asof and (
+                not prior_registration
+                or datetime.fromisoformat(observed["retrieved_at"]) > datetime.fromisoformat(prior_registration)
+            ):
                 insider_dealings["registration_snapshot"] = insider_vietnam.registration_observation(observed)
                 sources.append({
                     "name": "Quan sát đăng ký giao dịch đã lưu · CafeF",
