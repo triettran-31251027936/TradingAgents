@@ -30,7 +30,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 43
+VERSION = 44
 VERIFIED_SNAPSHOT_PREFIX = "Verified canonical VN snapshot (same source as other VN tools):\n"
 LOCK = threading.Lock()
 
@@ -1149,6 +1149,25 @@ def load(
                 }
             warnings.extend(market_news.get("warnings", []))
             sources.extend(market_news.get("sources", []))
+        cash_dividend_evidence = None
+        if not prices_only:
+            from desktop import cash_dividends
+
+            cash_dividend_evidence = cash_dividends.load(ticker, asof, cache_dir)
+            metrics.update(cash_dividends.metrics(cash_dividend_evidence))
+            missing = missing_metrics(metrics)
+            warnings.extend(cash_dividend_evidence["warnings"])
+            sources.extend(
+                {
+                    "name": "Công bố cổ tức tiền mặt · VSDC",
+                    "url": row["url"],
+                    "published": row["published"],
+                    "retrieved_at": cash_dividend_evidence["observed_at"],
+                    "sha256": row["sha256"],
+                    "status": "available",
+                }
+                for row in cash_dividend_evidence["records"]
+            )
         bundle = {
             "exchange": exchange,
             "company_name": instrument.get("enOrganName") or instrument.get("organName") or ticker,
@@ -1182,6 +1201,7 @@ def load(
             "valuation_reconciliation": valuation_proof,
             "bank_reconciliation": bank_proof,
             "debt_notes": debt_notes,
+            "cash_dividends": cash_dividend_evidence,
             "missing": missing,
             "warnings": warnings,
             "news": news,
@@ -1255,6 +1275,8 @@ def capsule(bundle, *, compact=False):
         ]
         if k in bundle
     }
+    if bundle.get("cash_dividends"):
+        decoded["cash_dividends"] = bundle["cash_dividends"]
     if bundle.get("debt_notes"):
         decoded["debt_notes"] = bundle["debt_notes"]
     canonical = bundle.get("metrics", {})

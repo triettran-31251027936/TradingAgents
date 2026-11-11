@@ -157,6 +157,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "valuation_reconciliation": quant.get("valuation_reconciliation", {}),
             "bank_reconciliation": quant.get("bank_reconciliation", {}),
             "debt_notes": quant.get("debt_notes", {}),
+            "cash_dividends": quant.get("cash_dividends", {}),
         }
     if runtime:
         incomplete = dict(runtime.incomplete_roles)
@@ -294,6 +295,20 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
             )
             text += "| " + " | ".join(cell(v) for v in values) + " |\n"
         text += "\n" + "\n".join("- " + cell(v) for v in q["basis"] + q["warnings"]) + "\n"
+        dividends = q.get("cash_dividends")
+        if dividends:
+            text += "\n### Cổ tức tiền mặt · VSDC\n\n"
+            text += (
+                f"Trạng thái nguồn: {cell(dividends['status'])}. "
+                "Số tiền theo cổ phiếu đủ điều kiện tại ngày chốt quyền, trước thuế. "
+                "Ngày thanh toán theo lịch công bố.\n\n"
+            )
+            for row in dividends["records"]:
+                text += (
+                    f"- {cell(row['record_date'])} · {row['cash_vnd_per_eligible_share']:,} VND/cp "
+                    f"· thanh toán dự kiến {cell(row['scheduled_payment_date'])} "
+                    f"· {cell(row['url'])}\n"
+                )
         news_coverage = q.get("news_coverage")
         if news_coverage:
             text += (
