@@ -224,3 +224,32 @@ def test_interest_and_earnings_proxy_require_reported_expense_sign(interest, exp
     cash["quarters"].append({**cash["quarters"][0], "yearReport": cash["quarters"][0]["yearReport"] + 1})
     extend(book, lambda name, value, *args: result.update({name: value}), field)
     assert result["ebitda_proxy_ttm"] is None
+
+
+def test_vhm_bond_note_requires_publication_and_matching_balance_sheet():
+    from desktop.debt_notes import load
+    from desktop.vietnam import capsule
+    import json
+
+    q = {
+        "metrics": {
+            key: {"value": value, "asof": "2026-Q3 public:2026-10-30"}
+            for key, value in (
+                ("short_term_borrowings", 65_251_206_000_000),
+                ("long_term_borrowings", 175_371_060_000_000),
+                ("gross_borrowings", 240_622_266_000_000),
+            )
+        }
+    }
+    assert load("VHM", "2026-11-02", q["metrics"]) == {}
+    assert load("VIC", "2026-11-10", q["metrics"]) == {}
+    notes = load("VHM", "2026-11-10", q["metrics"])
+    assert notes["reported_bond_rows"] == 37
+    assert notes["bond_carrying_vnd"] == 115_402_180_000_000
+    assert notes["bond_current_carrying_vnd"] == 6_078_936_000_000
+    assert notes["maturities"][0] == {
+        "month": "2026-11", "carrying_vnd": 2_088_920_000_000, "pdf_pages": [58]
+    }
+    assert json.loads(capsule({**q, "debt_notes": notes}))["debt_notes"] == notes
+    q["metrics"]["gross_borrowings"]["asof"] = "2026-Q2 public:2026-07-30"
+    assert load("VHM", "2026-11-10", q["metrics"]) == {}

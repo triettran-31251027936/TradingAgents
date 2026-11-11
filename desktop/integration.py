@@ -156,6 +156,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "financial_reconciliation": quant.get("financial_reconciliation", {}),
             "valuation_reconciliation": quant.get("valuation_reconciliation", {}),
             "bank_reconciliation": quant.get("bank_reconciliation", {}),
+            "debt_notes": quant.get("debt_notes", {}),
         }
     if runtime:
         incomplete = dict(runtime.incomplete_roles)
@@ -241,6 +242,21 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                 + cell(profile.get("sector_vi") or profile.get("sector") or "unavailable")
                 + ". Source: Vietcap company/details. Current observation, not a historical profile archive.\n\n"
             )
+
+        notes = q.get("debt_notes") or {}
+        if notes.get("status") == "available":
+            text += "\n### Số dư trái phiếu theo tháng đáo hạn công bố\n\n"
+            text += (
+                f"Số dư tại {cell(notes['statement_date'])}. "
+                f"Tổng giá trị ghi sổ {notes['bond_carrying_vnd']:,} VND từ "
+                f"{notes['reported_bond_rows']} dòng thuyết minh 24.3. "
+                f"[Báo cáo hợp nhất VHM qua HOSE]({notes['source']['url']})\n\n"
+            )
+            text += "| Tháng đáo hạn | Giá trị ghi sổ (VND) | Trang PDF |\n|---|---:|---|\n"
+            for row in notes["maturities"]:
+                pages = ", ".join(map(str, row["pdf_pages"]))
+                text += f"| {cell(row['month'])} | {row['carrying_vnd']:,} | {pages} |\n"
+            text += "\n" + cell(notes["scope"]) + "\n\n"
 
         if q.get("bank_reconciliation"):
             text += "\n### Chỉ tiêu ngân hàng\n\nTỷ số kế toán dư nợ/tiền gửi không phải LDR theo quy định NHNN. Tỷ số provider được giữ riêng, có thể mang dấu chi phí/dự phòng âm; phương pháp và cửa sổ tính chưa được đối soát từ thuyết minh. TTM tự tính chỉ dùng các quý liên tiếp đã đối chiếu với báo cáo năm.\n\n"

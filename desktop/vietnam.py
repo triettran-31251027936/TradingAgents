@@ -30,7 +30,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 38
+VERSION = 39
 VERIFIED_SNAPSHOT_PREFIX = "Verified canonical VN snapshot (same source as other VN tools):\n"
 LOCK = threading.Lock()
 
@@ -900,6 +900,13 @@ def load(
 
         apply_bank(metrics, bank_proof)
         missing = missing_metrics(metrics)
+        debt_notes = {}
+        if not prices_only:
+            from desktop.debt_notes import load as load_debt_notes
+
+            debt_notes = load_debt_notes(ticker, asof, metrics)
+            if debt_notes:
+                sources.append(debt_notes["source"])
         from desktop.financial_metrics import reconcile
 
         reconciliation = {
@@ -1157,6 +1164,7 @@ def load(
             "valuation_observed_at": valuation_observed_at,
             "valuation_reconciliation": valuation_proof,
             "bank_reconciliation": bank_proof,
+            "debt_notes": debt_notes,
             "missing": missing,
             "warnings": warnings,
             "news": news,
@@ -1230,6 +1238,8 @@ def capsule(bundle, *, compact=False):
         ]
         if k in bundle
     }
+    if bundle.get("debt_notes"):
+        decoded["debt_notes"] = bundle["debt_notes"]
     canonical = bundle.get("metrics", {})
     if bundle.get("domestic_macro"):
         macro = macro_summary(bundle["domestic_macro"])
