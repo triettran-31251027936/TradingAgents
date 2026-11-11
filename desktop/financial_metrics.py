@@ -129,6 +129,7 @@ def extend(book, add, field):
     windows = {}
     for name, kind, titles in [
         ("revenue_ttm", "income", ("Net sales",)),
+        ("operating_profit_ttm", "income", ("Operating profit/(loss)",)),
         ("net_profit_ttm", "income", ("Net profit/(loss) after tax",)),
         ("net_profit_parent_ttm", "income", ("Attributable to parent company",)),
         (
@@ -194,6 +195,17 @@ def extend(book, add, field):
         else None,
         "ratio",
         "CFO TTM / positive total after-tax profit TTM, same quarters",
+        source,
+        stamp,
+    )
+    same_operating_window = windows["operating_profit_ttm"] == windows["revenue_ttm"]
+    add(
+        "operating_margin_ttm",
+        ratio(values["operating_profit_ttm"], values["revenue_ttm"])
+        if same_operating_window else None,
+        "fraction",
+        "Reported operating profit / net sales; both flows independently reconciled over the same "
+        "four quarters. Uses the issuer's classification of financial income and expenses.",
         source,
         stamp,
     )

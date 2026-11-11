@@ -72,6 +72,7 @@ def test_independent_share_basis_computes_with_canonical_price_and_retains_misma
     assert p["quote_comparison"]["provider_price"] == 11
     assert r["market_cap_at_canonical_close"]["value"] == 1000
     assert r["pe_ttm"]["value"] == 10 and r["pb"]["value"] == pytest.approx(1000 / 600)
+    assert r["book_value_per_common_share"]["value"] == 6
     assert r["provider_pe_ttm_observed"]["value"] is None
     assert r["provider_pb_observed"]["value"] is None
     assert r["registered_shares"]["value"] == 100
@@ -138,6 +139,7 @@ def test_registry_alone_never_unlocks_unreconciled_common_equity(fault):
         book["balance"]["field_metadata"]["treasury"]["parent"] = "debt"
     r, p = independent_calculate(book, raw, profile, registry)
     assert r["pe_ttm"]["value"] is None and r["pb"]["value"] is None
+    assert r["book_value_per_common_share"]["value"] is None
     assert not p["registered_share_reconciliation"]["verified"]
 
 

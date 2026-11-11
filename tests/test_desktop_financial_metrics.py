@@ -293,3 +293,29 @@ def test_roa_ttm_uses_reconciled_same_window_assets():
     opening["Owner's Equity"] = -50
     balance["quarters"].append(closing.copy())
     assert calculate()[0] is None
+
+
+def test_operating_margin_requires_both_flows_to_reconcile():
+    from desktop.financial_metrics import extend
+
+    income = section([10, 20, 30, 40])
+    for row, operating_profit in zip(income["quarters"], [2, 5, 7, 6]):
+        row["Operating profit/(loss)"] = operating_profit
+    annual = income["years"][0]
+    annual["Operating profit/(loss)"] = 20
+    book = {"income": income, "balance": {"quarters": []}, "cash": {"quarters": []}}
+    metrics = {}
+
+    def calculate():
+        extend(
+            book,
+            lambda name, *values: metrics.update({name: values}),
+            lambda _book, _kind, title, *_aliases: "value" if title == "Net sales" else title,
+        )
+
+    calculate()
+    assert metrics["operating_profit_ttm"][0] == 20
+    assert metrics["operating_margin_ttm"][0] == pytest.approx(0.20)
+    annual["Operating profit/(loss)"] = 25
+    calculate()
+    assert metrics["operating_margin_ttm"][0] is None

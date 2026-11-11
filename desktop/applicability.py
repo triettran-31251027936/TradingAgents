@@ -8,6 +8,8 @@ BANK_INDUSTRIAL_ONLY = frozenset(
         "gross_profit",
         "gross_margin",
         "operating_profit",
+        "operating_profit_ttm",
+        "operating_margin_ttm",
         "net_margin_ttm",
         "current_assets",
         "current_liabilities",

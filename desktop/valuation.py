@@ -482,6 +482,14 @@ def extend(
         "ratio",
         "Market cap / positive parent-attributable equity at published TTM end; preferred capital must be explicitly zero",
     )
+    common_shares = registry_proof["registered_shares"] if independent else shares
+    emit(
+        "book_value_per_common_share",
+        end_equity / common_shares if verified and end_equity is not None else None,
+        "VND/share",
+        f"Positive parent-attributable equity ({end_note}) divided by the verified common-share "
+        "basis used for P/B. Share count as of the analysis date.",
+    )
     comparison_aligned = bool(
         chosen
         and number(chosen.get("numberOfSharesMktCap")) == shares
