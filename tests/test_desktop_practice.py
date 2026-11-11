@@ -575,3 +575,85 @@ def test_board_with_old_hnx_identity_does_not_show_cutover_candles(tmp_path, mon
     assert data["quote"]["price"] == 25000
     assert [row["time"] for row in data["candles"]] == [times[0]]
     assert data["calendar"]["hnx_listed_transition"]["scheduled_hose_start"] == "2026-12-28"
+
+
+def test_bsr_buy_sell_round_trip_requires_separate_approvals_and_t2(tmp_path, monkeypatch):
+    from desktop import paper, practice
+
+    clock = [moment("09:16:30")]
+
+    class TradeClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0].astimezone(tz) if tz else clock[0].replace(tzinfo=None)
+
+    monkeypatch.setattr(practice, "datetime", TradeClock)
+    monkeypatch.setattr(paper, "_utc", lambda: clock[0].isoformat())
+    store = PracticeStore(tmp_path)
+    ticker = "BSR.VN"
+
+    def propose(side, price):
+        day = clock[0].date().isoformat()
+        return store.proposal(
+            side,
+            {"execution": {"action": side, "quantity": 100, "limit_price": price,
+                           "rationale": "Isolated round trip", "data_gaps": []}},
+            {"ticker": ticker, "analysis_date": day, "fingerprint": "isolated",
+             "prices": [{"date": day, "close": price}],
+             "metrics": {k: {"value": 1} for k in (
+                 "close", "adv20", "volatility20_annual", "historical_var95_1d"
+             )}},
+            "HOSE",
+        )
+
+    def session_board(price, sessions):
+        rows = [
+            {**bar(f"09:{minute}:00", price), "time": int(
+                clock[0].replace(hour=9, minute=minute, second=0).timestamp()
+            )}
+            for minute in range(15, 20)
+        ]
+        return {**board(rows), "completed_sessions": sessions}
+
+    purchase = propose("Buy", 25000)
+    with pytest.raises(ValueError, match="xác nhận"):
+        store.approve(purchase["id"], purchase["preview_hash"], {})
+    assert sign(store, purchase, monkeypatch)["status"] == "APPROVED"
+    bought = store.sync({ticker: session_board(25000, [DAY])}, now=moment("09:20:00"))
+    assert bought["orders"][0]["status"] == "FILLED"
+    assert bought["positions"][ticker]["available_quantity"] == 0
+    with pytest.raises(ValueError, match="Không đủ cổ phiếu đã về tài khoản"):
+        propose("Sell", 26000)
+
+    first_settlement = ["2026-10-30", "2026-11-02", "2026-11-03"]
+    settled_buy = store.sync(
+        {ticker: session_board(25000, first_settlement)},
+        now=datetime(2026, 11, 3, 15, tzinfo=TZ),
+    )
+    assert settled_buy["positions"][ticker]["available_quantity"] == 100
+
+    clock[0] = datetime(2026, 11, 4, 9, 16, 30, tzinfo=TZ)
+    sale = propose("Sell", 26000)
+    with pytest.raises(ValueError):
+        store.approve(sale["id"], sale["preview_hash"], {})
+    marked = store.sync(
+        {ticker: session_board(26000, first_settlement)},
+        now=clock[0].replace(minute=16, second=30),
+    )
+    assert marked["positions"][ticker]["quantity"] == 100
+    assert marked["orders"][1]["status"] == "PROPOSED"
+    assert sign(store, store.preview(sale["id"]), monkeypatch)["status"] == "APPROVED"
+    sold = store.sync(
+        {ticker: session_board(26000, first_settlement)},
+        now=clock[0].replace(minute=20, second=0),
+    )
+    assert sold["orders"][1]["status"] == "FILLED"
+    assert sold["orders"][1]["result"]["fee"] == pytest.approx(6500)
+    assert sold["positions"] == {}
+    assert sold["cash"] == pytest.approx(3089750)
+    assert sold["available_cash"] == pytest.approx(496250)
+    settled_sale = store.sync(
+        {ticker: session_board(26000, first_settlement + ["2026-11-04", "2026-11-05", "2026-11-06"])},
+        now=datetime(2026, 11, 6, 15, tzinfo=TZ),
+    )
+    assert settled_sale["available_cash"] == pytest.approx(3089750)
