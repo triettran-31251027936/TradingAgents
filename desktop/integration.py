@@ -18,6 +18,7 @@ VN_METHODS = (
     "get_cashflow",
     "get_income_statement",
     "get_news",
+    "get_global_news",
     "get_macro_indicators",
     "get_insider_transactions",
 )
@@ -52,8 +53,14 @@ def prepare(
             global_news_lookback_days=cfg.get("global_news_lookback_days", 7),
             report_dir=report_library if report_library is not None else cfg.get("results_dir"),
         )
+        tool_vendors = graph.config.get("tool_vendors", {})
+        global_news_vendor = tool_vendors.get(
+            "get_global_news", graph.config.get("data_vendors", {}).get("news_data", "default")
+        )
+        if global_news_vendor != "vietnam":
+            graph.config["desktop_global_news_vendor"] = global_news_vendor
         graph.config["tool_vendors"] = {
-            **graph.config.get("tool_vendors", {}),
+            **tool_vendors,
             **dict.fromkeys(VN_METHODS, "vietnam"),
         }
         graph.config["desktop_quant_fingerprint"] = quant["fingerprint"]

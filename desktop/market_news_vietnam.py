@@ -32,7 +32,6 @@ SCOPE = (
     "VnEconomy / Tạp chí Kinh tế Việt Nam, one publisher across three RSS feeds. "
     "Headlines and at most 60 words of RSS excerpt per item; full articles not read. "
     "Secondary reporting, not verified macro facts, representative sentiment or exhaustive news. "
-    "Original Yahoo/Alpha Vantage global-news tools remain separate and unchanged. "
     "RSS publication date does not prove when later edits became available."
 )
 
@@ -216,3 +215,35 @@ def load(asof, cache_dir, *, look_back_days=7, limit=10, session=None, now=None)
 
 def summary(bundle):
     return {k: v for k, v in bundle.items() if k != "sources"}
+
+def tool(snapshot, asof, look_back_days, limit):
+    if type(limit) is not int or limit < 1 or type(look_back_days) is not int or look_back_days < 0:
+        raise ValueError("Global news requires positive article limit and nonnegative lookback")
+    target = datetime.fromisoformat(asof).date()
+    start = target - timedelta(days=look_back_days)
+    result = {
+        "status": "withheld",
+        "scope": SCOPE,
+        "requested_dates": [start.isoformat(), asof],
+        "article_limit": limit,
+        "records": [],
+    }
+    if snapshot.get("asof") != asof or not snapshot.get("window_end"):
+        return {**result, "reason": "No saved RSS observation for this analysis date"}
+    cutoff = stamp(snapshot["window_end"])
+    selected = [
+        row for row in snapshot.get("records", [])
+        if (published := stamp(row["published"])).date() >= start and published <= cutoff
+    ]
+    status = snapshot["status"]
+    if status == "available" and not selected:
+        status = "empty_sample"
+    return {
+        **result,
+        "status": status,
+        "saved_window": [snapshot["window_start"], snapshot["window_end"]],
+        "saved_article_limit": snapshot["article_limit"],
+        "sources": snapshot.get("sources", []),
+        "records": selected[:limit],
+        "coverage": "Only the overlap of the requested dates and saved bounded sample is returned.",
+    }

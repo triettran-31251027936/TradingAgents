@@ -30,7 +30,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 36
+VERSION = 37
 VERIFIED_SNAPSHOT_PREFIX = "Verified canonical VN snapshot (same source as other VN tools):\n"
 LOCK = threading.Lock()
 
@@ -1328,6 +1328,38 @@ def vendor_scope(bundle, cache_dir=None):
             ensure_ascii=False,
         )
 
+    def global_news(asof, look_back_days=None, limit=None):
+        from tradingagents.dataflows.config import get_config, run_config
+        from desktop.market_news_vietnam import tool
+
+        config = get_config()
+        days = config["global_news_lookback_days"] if look_back_days is None else look_back_days
+        count = config["global_news_article_limit"] if limit is None else limit
+        target = date.fromisoformat(asof)
+        if target.isoformat() != asof or asof > bundle["analysis_date"]:
+            raise ValueError("Global news date is invalid or after the analysis snapshot")
+        rss = tool(bundle.get("market_news", {}), asof, days, count)
+        method = "get_global_news"
+        configured = config.get("desktop_global_news_vendor", "default")
+        chain = [item.strip() for item in configured.split(",") if item.strip() not in ("", "default", "vietnam")]
+        if not chain:
+            chain = [name for name in router.VENDOR_METHODS[method] if name != "vietnam"]
+        config["tool_vendors"][method] = ",".join(chain)
+        try:
+            with run_config(config):
+                upstream = router.route_to_vendor(method, asof, days, count)
+        except Exception as exc:
+            upstream = f"DATA_UNAVAILABLE: configured global news source ({type(exc).__name__})"
+        return json.dumps(
+            {
+                "upstream": upstream,
+                "upstream_vendors": chain,
+                "vneconomy_rss": rss,
+                "article_limit_per_section": count,
+            },
+            ensure_ascii=False,
+        )
+
     def macro(indicator, asof, look_back_days=None):
         if indicator.startswith("vn_"):
             from desktop.macro_vietnam import tool
@@ -1371,6 +1403,7 @@ def vendor_scope(bundle, cache_dir=None):
         "get_cashflow": statement("cash"),
         "get_income_statement": statement("income"),
         "get_news": news,
+        "get_global_news": global_news,
     }
     try:
         for method, fn in methods.items():

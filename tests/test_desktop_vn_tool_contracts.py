@@ -178,3 +178,41 @@ def test_desktop_preparation_passes_configured_news_limit(tmp_path, monkeypatch)
         SimpleNamespace(config={}), "FPT.VN", "2026-10-30", None, cfg, [], lambda *a: None
     )
     assert supplied == [45]
+
+
+def test_global_news_reads_dated_rss_and_preserves_configured_upstream(tool_bundle, monkeypatch):
+    from tradingagents.agents.tools import get_global_news
+    from tradingagents.dataflows import router
+    from tradingagents.dataflows.config import run_config
+
+    day = "2026-10-30"
+    tool_bundle["market_news"] = {
+        "asof": day, "status": "available", "article_limit": 10,
+        "window_start": "2026-10-23T00:00:00+07:00", "window_end": f"{day}T16:00:00+07:00",
+        "records": [
+            {"id": "after-cutoff", "published": f"{day}T18:00:00+07:00"},
+            {"id": "saved", "published": f"{day}T10:00:00+07:00"},
+            {"id": "old", "published": "2026-10-24T12:00:00+07:00"},
+        ],
+    }
+    seen = []
+    vendors = router.VENDOR_METHODS["get_global_news"]
+
+    def alpha(asof, days, limit):
+        seen.append((asof, days, limit))
+        return "Original Alpha Vantage report"
+
+    monkeypatch.setitem(vendors, "alpha_vantage", alpha)
+    monkeypatch.setitem(vendors, "yfinance", lambda *a: pytest.fail("unexpected Yahoo route"))
+    cfg = {"tool_vendors": {"get_global_news": "vietnam"},
+           "desktop_global_news_vendor": "alpha_vantage"}
+    with vietnam.vendor_scope(tool_bundle), run_config(cfg):
+        data = json.loads(get_global_news.invoke({"curr_date": day, "look_back_days": 1, "limit": 1}))
+        assert data["upstream"] == "Original Alpha Vantage report"
+        assert data["upstream_vendors"] == ["alpha_vantage"]
+        assert [row["id"] for row in data["vneconomy_rss"]["records"]] == ["saved"]
+        past = json.loads(get_global_news.invoke({"curr_date": "2026-10-29", "look_back_days": 7}))
+        assert past["vneconomy_rss"]["status"] == "withheld"
+        assert not past["vneconomy_rss"]["records"]
+    assert seen[0] == (day, 1, 1)
+    assert "vietnam" not in vendors
