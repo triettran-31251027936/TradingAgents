@@ -124,6 +124,10 @@ def extend(book, add, field):
             ),
         ),
         ("capex_signed_ttm", "cash", ("Purchases of fixed assets and other long term assets",)),
+        ("pretax_profit_ttm", "income", ("Net accounting profit/(loss) before tax",)),
+        ("interest_expense_signed_ttm", "income", ("Interest expenses",)),
+        ("interest_paid_signed_ttm", "cash", ("Interest paid",)),
+        ("depreciation_amortization_ttm", "cash", ("Depreciation and amortization",)),
     ]:
         value, check, window = ttm(book[kind], key(kind, *titles))
         proof[name] = check
@@ -190,6 +194,23 @@ def extend(book, add, field):
         source,
         bdate,
     )
+    gross = short + long if short is not None and long is not None and min(short, long) >= 0 else None
+    add(
+        "gross_borrowings",
+        gross,
+        "VND",
+        "Short-term plus long-term borrowings in the same balance sheet. This is a reported balance, not a contractual maturity schedule.",
+        source,
+        bdate,
+    )
+    add(
+        "cash_to_short_borrowings",
+        ratio(cash, short) if cash is not None and cash >= 0 else None,
+        "ratio",
+        "Cash and equivalents / positive short-term borrowings. Other current liabilities and access restrictions require separate review.",
+        source,
+        bdate,
+    )
     add(
         "cash_less_borrowings",
         cash - short - long if all(v is not None for v in (cash, short, long)) else None,
@@ -204,6 +225,34 @@ def extend(book, add, field):
         eps,
         "VND/share",
         "Provider EPS for latest reported period; NOT EPS TTM; do not sum quarterly EPS with different weighted shares",
+        source,
+        stamp,
+    )
+    pretax = values["pretax_profit_ttm"]
+    interest = values["interest_expense_signed_ttm"]
+    depreciation = values["depreciation_amortization_ttm"]
+    same_income = windows["pretax_profit_ttm"] == windows["interest_expense_signed_ttm"]
+    earnings_before_interest = (
+        pretax - interest
+        if same_income and pretax is not None and interest is not None and interest <= 0
+        else None
+    )
+    add(
+        "pretax_plus_interest_coverage_ttm",
+        ratio(earnings_before_interest, -interest) if interest is not None else None,
+        "ratio",
+        "(Pretax profit TTM minus signed interest expense TTM) / positive interest expense. Same quarters; includes non-operating gains and does not measure cash debt service.",
+        source,
+        stamp,
+    )
+    same_cash = windows["pretax_profit_ttm"] == windows["depreciation_amortization_ttm"]
+    add(
+        "ebitda_proxy_ttm",
+        earnings_before_interest + depreciation
+        if same_cash and earnings_before_interest is not None and depreciation is not None and depreciation >= 0
+        else None,
+        "VND",
+        "Pretax profit minus signed interest expense plus cash-flow statement depreciation and amortization, on the same four quarters. Includes non-operating items; may differ from provider EBITDA.",
         source,
         stamp,
     )

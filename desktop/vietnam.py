@@ -30,7 +30,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 37
+VERSION = 38
 VERIFIED_SNAPSHOT_PREFIX = "Verified canonical VN snapshot (same source as other VN tools):\n"
 LOCK = threading.Lock()
 
@@ -908,7 +908,11 @@ def load(
                 for key in book[kind]["fields"]
                 if any(
                     term in book[kind]["fields"][key].lower()
-                    for term in ("net sales", "operating activities", "purchases of fixed")
+                    for term in (
+                        "net sales", "operating activities", "purchases of fixed",
+                        "accounting profit/(loss) before tax", "interest expenses",
+                        "interest paid", "depreciation and amortization",
+                    )
                 )
             }
             for kind in ("income", "cash")

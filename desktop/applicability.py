@@ -19,6 +19,10 @@ BANK_INDUSTRIAL_ONLY = frozenset(
         "cash_conversion_ttm",
         "cash_less_borrowings",
         "cash_and_equivalents",
+        "gross_borrowings",
+        "cash_to_short_borrowings",
+        "pretax_plus_interest_coverage_ttm",
+        "ebitda_proxy_ttm",
     }
 )
 

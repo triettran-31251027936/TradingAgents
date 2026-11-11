@@ -1,5 +1,8 @@
 """Quarter/FY reconciliation must precede flow arithmetic."""
 
+import pytest
+
+
 from desktop.financial_metrics import reconcile, ttm
 
 
@@ -187,3 +190,37 @@ def test_negative_capex_same_periods_yields_defined_fcf():
     result = {}
     extend(book, lambda name, value, *args: result.update({name: value}), field)
     assert result["fcf_ttm"] == 80
+
+
+@pytest.mark.parametrize("interest,expected", [(-5, 6), (5, None)])
+def test_interest_and_earnings_proxy_require_reported_expense_sign(interest, expected):
+    from desktop.financial_metrics import extend
+    from desktop.vietnam import field
+
+    income = section([25, 25, 25, 25])
+    income["fields"] = {"value": "Net accounting profit/(loss) before tax", "interest": "Interest expenses"}
+    cash = section([2, 2, 2, 2], annual=8)
+    cash["fields"] = {"value": "Depreciation and amortization", "paid": "Interest paid"}
+    for row in income["quarters"]:
+        row["interest"] = interest
+    income["years"][0]["interest"] = 4 * interest
+    for row in cash["quarters"]:
+        row["paid"] = -6
+    cash["years"][0]["paid"] = -24
+    balance = {
+        "fields": {"cash": "Cash and cash equivalents", "short": "Short-term borrowings",
+                   "long": "Long-term borrowings"},
+        "quarters": [{"yearReport": 2025, "lengthReport": 4, "cash": 10, "short": 20, "long": 30}],
+    }
+    result = {}
+    book = {"income": income, "cash": cash, "balance": balance}
+    extend(book, lambda name, value, *args: result.update({name: value}), field)
+    assert result["gross_borrowings"] == 50
+    assert result["cash_to_short_borrowings"] == 0.5
+    assert result["interest_expense_signed_ttm"] == interest * 4
+    assert result["interest_paid_signed_ttm"] == -24
+    assert result["pretax_plus_interest_coverage_ttm"] == expected
+    assert result["ebitda_proxy_ttm"] == (128 if expected is not None else None)
+    cash["quarters"].append({**cash["quarters"][0], "yearReport": cash["quarters"][0]["yearReport"] + 1})
+    extend(book, lambda name, value, *args: result.update({name: value}), field)
+    assert result["ebitda_proxy_ttm"] is None
