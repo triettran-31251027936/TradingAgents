@@ -600,3 +600,22 @@ def test_news_prompt_keeps_full_tool_response_and_removes_only_identical_snapsho
         assert exact["excerpt"] in runtime.prompt([msg], role)[0].content
     failed = msg.model_copy(update={"status": "error"})
     assert exact["excerpt"] in runtime.prompt([failed], "News Analyst")[0].content
+
+
+def test_fifty_two_week_extrema_require_coverage_and_exclude_older_bars():
+    empty = {"fields": {}, "quarters": [], "years": []}
+    book = dict.fromkeys(("income", "cash", "balance"), empty)
+    rows = [
+        {**bars()[0], "date": "2025-10-01", "high": 80000, "low": 1000},
+        {**bars()[0], "date": "2025-11-13", "high": 51000, "low": 49000},
+        {**bars()[0], "date": "2026-01-02", "high": 63000, "low": 40000},
+        {**bars()[0], "date": "2026-11-11", "high": 57000, "low": 45000},
+    ]
+    metrics, _ = vietnam.compute(rows, book)
+    assert metrics["high_52w"]["value"] == 63000
+    assert metrics["low_52w"]["value"] == 40000
+    assert metrics["high_52w"]["asof"] == "2026-11-11"
+    assert "3 observed sessions from 2025-11-12" in metrics["low_52w"]["formula"]
+    short_history, _ = vietnam.compute(rows[1:], book)
+    assert short_history["high_52w"]["value"] is None
+    assert short_history["low_52w"]["value"] is None

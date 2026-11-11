@@ -30,7 +30,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 40
+VERSION = 41
 VERIFIED_SNAPSHOT_PREFIX = "Verified canonical VN snapshot (same source as other VN tools):\n"
 LOCK = threading.Lock()
 
@@ -311,6 +311,23 @@ def compute(
 
     add("close", close.iloc[-1], "VND/share", "Last completed close")
     add("volume", df["volume"].iloc[-1], "shares", "Last completed volume")
+    cutoff_52w = (date.fromisoformat(rows[-1]["date"]) - timedelta(weeks=52)).isoformat()
+    if rows[0]["date"] <= cutoff_52w:
+        window_52w = df.loc[cutoff_52w:]
+        high_52w, low_52w = window_52w["high"].max(), window_52w["low"].min()
+        coverage_52w = f"{len(window_52w)} observed sessions from {cutoff_52w}"
+    else:
+        high_52w = low_52w = None
+        coverage_52w = f"history does not reach the window start {cutoff_52w}"
+    for name, value, definition in (
+        ("high_52w", high_52w, "Maximum daily high"),
+        ("low_52w", low_52w, "Minimum daily low"),
+    ):
+        add(
+            name, value, "VND/share",
+            f"{definition} over 52 calendar weeks ending at the last completed close; "
+            f"{coverage_52w}; analysis-candle price basis may include historical adjustments",
+        )
     add(
         "adv20",
         df["volume"].tail(20).mean() if len(df) >= 20 else None,
