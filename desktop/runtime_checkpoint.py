@@ -69,6 +69,13 @@ class RuntimeCheckpoint:
             if not isinstance(news_tool_receipts, dict):
                 raise ValueError("Invalid news tool receipts")
             self.runtime.news_tool_receipts = news_tool_receipts
+            market_tool_receipts = value.get("market_tool_receipts", {})
+            if not isinstance(market_tool_receipts, dict) or any(
+                not isinstance(row, dict) or row.get("snapshot_fingerprint") != self.fingerprint
+                for row in market_tool_receipts.values()
+            ):
+                raise ValueError("Invalid market tool receipts")
+            self.runtime.market_tool_receipts = market_tool_receipts
             self.runtime.decision = decision
             self.runtime.paid_budget.calls = calls
             self.usage.items = value["usage_items"]
@@ -132,6 +139,7 @@ class RuntimeCheckpoint:
                             "incomplete_roles",
                             "decision",
                             "news_tool_receipts",
+                            "market_tool_receipts",
                         )
                     }
                 )

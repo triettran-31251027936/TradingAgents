@@ -682,3 +682,23 @@ def test_verified_market_tool_returns_ohlcv_and_bounded_dated_closes():
         assert item["relationship"] == ("above" if difference > 0 else "below" if difference < 0 else "equal")
     assert "crossover" in snapshot["scope"]
     assert "99000" not in response
+
+
+def test_market_tool_receipt_only_captures_exact_canonical_data(tmp_path):
+    from langchain_core.messages import AIMessage, ToolMessage
+    from desktop.technical_vietnam import verified_snapshot
+
+    q = bundle()
+    q["prices"] = [{**bars()[0], "date": q["analysis_date"]}]
+    runtime = Runtime({"data_cache_dir": str(tmp_path)}, quant=q)
+    content = verified_snapshot(q, q["analysis_date"])
+    message = ToolMessage(
+        name="get_verified_market_snapshot", content=content, tool_call_id="tool"
+    )
+    wrong = message.model_copy(update={"content": content.replace(q["fingerprint"], "wrong")})
+    prompt = runtime.prompt([wrong, message, message], "Market Analyst")
+    runtime._capture("Market Analyst", AIMessage(content="Market report"), value=prompt)
+    receipt, = runtime.market_tool_receipts.values()
+    assert receipt["snapshot_fingerprint"] == q["fingerprint"]
+    assert receipt["latest_ohlcv"]["close"] == q["prices"][0]["close"]
+    assert receipt["recent_close_count"] == 1

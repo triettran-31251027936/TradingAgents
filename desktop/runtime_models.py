@@ -126,6 +126,7 @@ class Runtime:
         self.grounding = {}
         self.handoffs = {}
         self.news_tool_receipts = {}
+        self.market_tool_receipts = {}
         self.incomplete_roles = {}
         self._checkpoint = None
         from desktop.account_metrics import evidence
@@ -325,6 +326,40 @@ class Runtime:
             with self.lock:
                 self.news_tool_receipts.update(receipts)
 
+    def capture_market_tool(self, value):
+        from desktop.technical_vietnam import verified_snapshot
+        from desktop.vietnam import VERIFIED_SNAPSHOT_PREFIX
+
+        for message in messages(value):
+            if (
+                not isinstance(message, ToolMessage)
+                or message.name != "get_verified_market_snapshot"
+                or message.status != "success"
+                or not isinstance(message.content, str)
+                or not message.content.startswith(VERIFIED_SNAPSHOT_PREFIX)
+            ):
+                continue
+            try:
+                snapshot = json.loads(message.content.removeprefix(VERIFIED_SNAPSHOT_PREFIX))
+                count = len(snapshot["recent_closes"])
+                day = self.quant["analysis_date"]
+                if not 1 <= count <= 30 or message.content != verified_snapshot(self.quant, day, count):
+                    continue
+            except (KeyError, TypeError, ValueError):
+                continue
+            checksum = hashlib.sha256(message.content.encode()).hexdigest()
+            receipt = {
+                "tool": message.name,
+                "date": day,
+                "snapshot_fingerprint": self.quant["fingerprint"],
+                "latest_ohlcv": snapshot["latest_ohlcv"],
+                "recent_close_count": count,
+                "indicator_count": len(snapshot["technical_indicators"]),
+                "result_sha256": checksum,
+            }
+            with self.lock:
+                self.market_tool_receipts[checksum] = receipt
+
     def invoke(self, role, spec, model, value, config, *, schema=None):
         schema_name = (
             (schema.__module__ + "." + schema.__name__)
@@ -426,8 +461,11 @@ class Runtime:
         return result
 
     def _capture(self, role, result, value=None):
-        if self.quant and role == "News Analyst" and value is not None:
-            self.capture_news_tools(value)
+        if self.quant and value is not None:
+            if role == "News Analyst":
+                self.capture_news_tools(value)
+            elif role == "Market Analyst":
+                self.capture_market_tool(value)
         if isinstance(result, AIMessage) and not result.tool_calls:
             finish = result.response_metadata.get("finish_reason")
             with self.lock:

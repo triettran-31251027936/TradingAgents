@@ -175,6 +175,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
         result["grounding"] = runtime.grounding
         result["handoffs"] = runtime.handoffs
         result["news_tool_receipts"] = list(runtime.news_tool_receipts.values())
+        result["market_tool_receipts"] = list(runtime.market_tool_receipts.values())
         result["account_metrics"] = runtime.account_metrics
         vietnam.write_json(folder / "handoffs.json", runtime.handoffs)
         result["paid_budget"] = runtime.paid_budget.summary()
@@ -414,6 +415,17 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
             else:
                 timing = "retrieval/observation time unavailable"
             text += f"\n- {cell(source.get('name', 'Source'))}: {cell(source.get('url') or source.get('source_url') or 'URL unavailable')} ({cell(timing)})\n"
+    market_receipts = result.get("market_tool_receipts", [])
+    if market_receipts:
+        text += "\n### Dữ liệu công cụ trong đầu vào Market Analyst\n\n"
+        text += "| Ngày phân tích | Phiên OHLCV | Đóng cửa (đ/cp) | Số giá đóng cửa | Chỉ báo | SHA-256 kết quả |\n|---|---|---:|---:|---:|---|\n"
+        for receipt in market_receipts:
+            candle = receipt["latest_ohlcv"]
+            values = (
+                receipt["date"], candle["date"], candle["close"], receipt["recent_close_count"],
+                receipt["indicator_count"], receipt["result_sha256"],
+            )
+            text += "| " + " | ".join(map(cell, values)) + " |\n"
     news_receipts = result.get("news_tool_receipts", [])
     if news_receipts:
         text += "\n### Dữ liệu công cụ trong đầu vào News Analyst\n\n"
