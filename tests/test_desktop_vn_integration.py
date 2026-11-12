@@ -676,4 +676,9 @@ def test_verified_market_tool_returns_ohlcv_and_bounded_dated_closes():
     ]
     assert snapshot["snapshot_fingerprint"] == q["fingerprint"]
     assert "rsi" in snapshot["technical_indicators"]
+    for name, item in snapshot["close_relationships"].items():
+        difference = snapshot["latest_ohlcv"]["close"] - item["reference_vnd"]
+        assert item["close_minus_reference_vnd"] == difference
+        assert item["relationship"] == ("above" if difference > 0 else "below" if difference < 0 else "equal")
+    assert "crossover" in snapshot["scope"]
     assert "99000" not in response

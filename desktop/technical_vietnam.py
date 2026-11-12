@@ -194,6 +194,24 @@ def verified_snapshot(bundle, asof, look_back_days=30, indicators=None):
             values[name] = value if math.isfinite(value) else None
         else:
             values[name] = None
+    comparisons = {}
+    for name in ("close_10_ema", "close_50_sma", "close_200_sma", "vwma", "boll", "boll_lb", "boll_ub"):
+        if name in values:
+            reference = values[name]
+        elif name == "vwma":
+            if calculated is None:
+                calculated = wrap(pd.DataFrame(rows).set_index("date"))
+            reference = float(calculated[name].iloc[-1])
+        else:
+            continue
+        if reference is None or not math.isfinite(reference):
+            continue
+        difference = latest["close"] - reference
+        comparisons[name] = {
+            "reference_vnd": reference,
+            "close_minus_reference_vnd": difference,
+            "relationship": "above" if difference > 0 else "below" if difference < 0 else "equal",
+        }
     recent = rows[-max(1, min(int(look_back_days), 30)):]
     payload = {
         "ticker": bundle["ticker"], "analysis_date": asof,
@@ -202,8 +220,10 @@ def verified_snapshot(bundle, asof, look_back_days=30, indicators=None):
         "price_basis": bundle.get("price_basis", {}).get("description", _SOURCE_BASIS),
         "latest_ohlcv": {key: latest[key] for key in ("date", *OHLC, "volume")},
         "technical_indicators": values,
+        "close_relationships": comparisons,
         "recent_closes": [{"date": row["date"], "close": row["close"]} for row in recent],
         "scope": "Completed candles only. Use dated prices to verify exact claims. "
+                 "Relationships compare values on the same row; they do not prove a crossover. "
                  "Missing sessions and null indicators are not zero. Price scale may reflect historical adjustments.",
     }
     return VERIFIED_SNAPSHOT_PREFIX + json.dumps(payload, ensure_ascii=False, allow_nan=False)
