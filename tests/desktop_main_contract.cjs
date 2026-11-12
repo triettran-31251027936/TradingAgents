@@ -46,6 +46,10 @@ const context={require:name=>name==='electron'?electron:name==='node:child_proce
   const signature=crypto.createHmac('sha256',approved.env.TRADINGAGENTS_PAPER_APPROVAL_KEY).update(`${preview.id}|${preview.preview_hash}|${approved.payload.approval.timestamp}`).digest('hex');
   assert.equal(approved.payload.approval.signature,signature);
   assert.notEqual(approved.env.TRADINGAGENTS_PAPER_APPROVAL_KEY,'must-not-leak');
+  await new Promise(resolve=>setTimeout(resolve,10));
+  const background=requests.find(x=>x.action==='paper_tick');assert.ok(background,'start matching after native approval');
+  assert.equal(background.env.TRADINGAGENTS_PAPER_APPROVAL_KEY,undefined,'background polling has no approval capability');
+
   await assert.rejects(send('paper_approve',{id:preview.id}),/Unsupported desktop action/);
   await assert.rejects(send('start',{action:'paper_approve'}),/Unsupported TradingAgents job/);
   console.log('Electron main: startup gate, environment isolation, cancel/confirm and renderer approval protection passed');

@@ -742,3 +742,28 @@ def test_hose_odd_lot_uses_only_reconciled_post_approval_prints(tmp_path, monkey
         now=datetime(2026, 11, 3, 15, tzinfo=TZ),
     )
     assert settled["positions"][ticker]["available_quantity"] == 3
+
+
+def test_background_tick_only_requests_market_data_for_approved_orders(tmp_path, monkeypatch):
+    from desktop import bridge, market_board
+
+    monkeypatch.setattr(
+        bridge, "config",
+        lambda: {"data_cache_dir": str(tmp_path), "desktop_vietnam": {"paper_enabled": True}},
+    )
+    store = PracticeStore(tmp_path)
+    p = proposal(store, "VHM.VN")
+    requested = []
+
+    def fetch(ticker, interval, cache_dir):
+        requested.append((ticker, interval))
+        raise RuntimeError("temporary feed outage")
+
+    monkeypatch.setattr(market_board, "board", fetch)
+    assert bridge.dispatch("paper_tick", {}) == {"pending": False, "matching_error": None}
+    assert requested == []
+    sign(store, p, monkeypatch)
+    result = bridge.dispatch("paper_tick", {})
+    assert requested == [("VHM.VN", "1m")]
+    assert result["pending"] is True
+    assert store.snapshot()["orders"][0]["status"] == "APPROVED"

@@ -1,7 +1,7 @@
 const {app,BrowserWindow,ipcMain,dialog,shell,nativeTheme,Menu,clipboard}=require('electron');
 const fs=require('node:fs');
 const crypto=require('node:crypto');
-let approving=false, paperMarketPromise=null;
+let approving=false, paperMarketPromise=null, paperTimer=null;
 const path=require('node:path');
 const {spawn,execFile}=require('node:child_process');
 const manifest=JSON.parse(fs.readFileSync(path.join(process.resourcesPath,'trading-desktop.json'),'utf8'));
@@ -66,6 +66,23 @@ function bridge(action,payload={},long=false,approvalKey=null){
   child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify({action,payload}));
  });
 }
+function schedulePaperTick(delay=15000){
+ if(quitting||paperTimer)return;
+ paperTimer=setTimeout(async()=>{
+  paperTimer=null;
+  if(quitting)return;
+  if(approving||paperMarketPromise){schedulePaperTick();return;}
+  const pending=bridge('paper_tick');
+  paperMarketPromise=pending;
+  try{
+   const result=await pending;
+   if(result.pending)schedulePaperTick();
+   if(result.matching_error)startupFailure('paper sync '+result.matching_error);
+  }catch(error){if(!quitting){startupFailure(error);schedulePaperTick(30000);}}
+  finally{if(paperMarketPromise===pending)paperMarketPromise=null;}
+ },delay);
+ paperTimer.unref?.();
+}
 function stopJob(){
  if(!active)return Promise.resolve(false);
  const owned=active;owned.cancelled=true;
@@ -88,7 +105,7 @@ ipcMain.handle('ta:request',async(event,action,payload)=>{
   try{return JSON.parse(fs.readFileSync(bootstrapFile,'utf8'));}catch{return null;}
  }
  if(action==='meta'){
-  if(!metaPromise)metaPromise=bridge('meta',{}).then(meta=>{engineReady=true;fs.writeFileSync(bootstrapFile,JSON.stringify(meta),{mode:0o600});return meta;}).finally(()=>{metaPromise=null;});
+  if(!metaPromise)metaPromise=bridge('meta',{}).then(meta=>{engineReady=true;fs.writeFileSync(bootstrapFile,JSON.stringify(meta),{mode:0o600});if(meta.config?.desktop_vietnam?.paper_enabled)schedulePaperTick(1000);return meta;}).finally(()=>{metaPromise=null;});
   return metaPromise;
  }
  if(['save_config','save_api_key','remove_api_key','paper_review','paper_reject','paper_market','start'].includes(action)&&!engineReady)throw new Error('Bộ dữ liệu đang khởi động. Chờ đồng bộ cấu hình trước khi thực hiện.');
@@ -97,7 +114,7 @@ ipcMain.handle('ta:request',async(event,action,payload)=>{
   if(paperMarketPromise)await paperMarketPromise.catch(()=>{});
   if(approving)throw new Error('Đang duyệt lệnh.');
   const pending=bridge(action,payload||{});paperMarketPromise=pending;
-  try{return await pending;}finally{if(paperMarketPromise===pending)paperMarketPromise=null;}
+  try{const result=await pending;if(result.pending)schedulePaperTick();return result;}finally{if(paperMarketPromise===pending)paperMarketPromise=null;}
  }
  if(quickActions.has(action))return bridge(action,payload||{});
  if(action==='paper_reject'){if(active||approving)throw new Error('Chờ tác vụ hiện tại kết thúc.');return bridge(action,payload||{});}
@@ -113,7 +130,9 @@ ipcMain.handle('ta:request',async(event,action,payload)=>{
    if(answer.response!==1)return {cancelled:true};
    const timestamp=Math.floor(Date.now()/1000),secret=crypto.randomBytes(32).toString('hex');
    const signature=crypto.createHmac('sha256',secret).update(`${preview.id}|${preview.preview_hash}|${timestamp}`).digest('hex');
-   return await bridge('paper_approve',{id:preview.id,preview_hash:preview.preview_hash,approval:{timestamp,signature}},false,secret);
+   const approved=await bridge('paper_approve',{id:preview.id,preview_hash:preview.preview_hash,approval:{timestamp,signature}},false,secret);
+   schedulePaperTick(0);
+   return approved;
   }finally{approving=false;}
  }
  if(action==='clear_checkpoints'){if(active)throw new Error('Dừng tác vụ đang chạy trước khi xóa checkpoint.');const answer=await dialog.showMessageBox(window,{type:'warning',buttons:['Giữ lại','Xóa checkpoint'],defaultId:0,cancelId:0,title:'Chạy mới',message:'Xóa toàn bộ checkpoint đã lưu?',detail:'Không xóa báo cáo hoặc memory. Các lượt đang dở sẽ không thể tiếp tục từ checkpoint cũ.'});if(answer.response!==1)return {cancelled:true};return bridge('clear_checkpoints');}
@@ -166,5 +185,5 @@ app.whenReady().then(()=>{
   if(active&&!quitting){event.preventDefault();const response=dialog.showMessageBoxSync(window,{type:'question',buttons:['Tiếp tục chạy','Dừng và thoát'],defaultId:0,cancelId:0,title:'Trading Agents đang phân tích',message:'Tác vụ chưa hoàn tất. Dừng tác vụ và thoát?',detail:active.action==='subscription_login'?'Phiên đăng nhập này sẽ bị hủy.':'Các bước đã lưu checkpoint có thể được tiếp tục khi chạy lại cùng cấu hình.'});if(response===1){quitting=true;stopJob().then(()=>app.quit());}}
  });
 });
-app.on('before-quit',()=>{for(const child of bridgeChildren){if(child!==active?.child){try{process.kill(-child.pid,'SIGKILL');}catch{}}}});
+app.on('before-quit',()=>{quitting=true;if(paperTimer)clearTimeout(paperTimer);for(const child of bridgeChildren){if(child!==active?.child){try{process.kill(-child.pid,'SIGKILL');}catch{}}}});
 app.on('window-all-closed',()=>app.quit());

@@ -538,36 +538,44 @@ def dispatch(action, payload):
     cfg = config()
     if action.startswith("paper_"):
         if not cfg.get("desktop_vietnam", {}).get("paper_enabled"):
+            if action == "paper_tick":
+                return {"pending": False, "matching_error": None}
             raise ValueError("Tài khoản tiền ảo chưa bật trong cấu hình.")
         from desktop.practice import PracticeStore as Store
         from desktop.vietnam import load
 
         store = Store(cfg["data_cache_dir"])
-        if action == "paper_market":
+        if action in ("paper_market", "paper_tick"):
             from datetime import datetime
             from zoneinfo import ZoneInfo
 
             from desktop.market_board import board
 
-            ticker = str(payload.get("ticker", "HPG.VN")).upper()
-            interval = payload.get("interval", "1m")
-            market = board(ticker, interval, cfg["data_cache_dir"])
             book = store.snapshot()
-            names = {o["ticker"] for o in book["orders"] if o["status"] == "APPROVED"}
-            names.update(book["positions"])
-            names.add(ticker)
-            boards = {
-                name: (
-                    market
-                    if name == ticker and interval == "1m"
-                    else board(name, "1m", cfg["data_cache_dir"])
-                )
-                for name in sorted(names)
-            }
-            odd_names = {
-                order["ticker"] for order in book["orders"]
-                if order["status"] == "APPROVED" and order.get("lot") == "odd"
-            }
+            approved = [order for order in book["orders"] if order["status"] == "APPROVED"]
+            if action == "paper_tick" and not approved:
+                return {"pending": False, "matching_error": None}
+            names = {order["ticker"] for order in approved}
+            ticker = None
+            market = None
+            if action == "paper_market":
+                ticker = str(payload.get("ticker", "HPG.VN")).upper()
+                interval = payload.get("interval", "1m")
+                market = board(ticker, interval, cfg["data_cache_dir"])
+                names.update(book["positions"])
+                names.add(ticker)
+            boards = {}
+            for name in sorted(names):
+                try:
+                    boards[name] = (
+                        market if name == ticker and interval == "1m"
+                        else board(name, "1m", cfg["data_cache_dir"])
+                    )
+                except (OSError, ValueError, RuntimeError):
+                    if name == ticker:
+                        raise
+                    boards[name] = {"status": "unavailable"}
+            odd_names = {order["ticker"] for order in approved if order.get("lot") == "odd"}
             odd_quotes = {}
             tz = ZoneInfo("Asia/Ho_Chi_Minh")
             if odd_names:
@@ -581,10 +589,14 @@ def dispatch(action, payload):
             except ValueError as exc:
                 matching_error = str(exc)
                 result = store.snapshot()
+            pending = any(order["status"] == "APPROVED" for order in result["orders"])
+            if action == "paper_tick":
+                return {"pending": pending, "matching_error": matching_error}
             return {
                 "market": market,
                 "matching_error": matching_error,
                 "account": result,
+                "pending": pending,
                 "engine": "Backtrader / BackBroker",
                 "initial_cash": 3_000_000,
                 "mode": "local_paper_with_real_market_prices",
