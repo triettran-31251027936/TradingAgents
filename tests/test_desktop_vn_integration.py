@@ -652,3 +652,28 @@ def test_compact_capsule_shares_exact_repeated_metadata_without_changing_tool_ou
                     record[field] = references[value]
     assert reconstructed == json.loads(original)
     assert vietnam.capsule(q) == original
+
+
+def test_verified_market_tool_returns_ohlcv_and_bounded_dated_closes():
+    from tradingagents.agents.tools import get_verified_market_snapshot
+
+    q = bundle()
+    q["prices"] = [
+        {**bars()[0], "date": "2026-10-29", "close": 24900},
+        {**bars()[0], "date": "2026-10-30", "close": 25100},
+        {**bars()[0], "date": "2026-11-02", "close": 99000},
+    ]
+    q["analysis_date"] = "2026-10-30"
+    with vietnam.vendor_scope(q):
+        response = get_verified_market_snapshot.func(
+            symbol=q["ticker"], curr_date=q["analysis_date"], trade_date=q["analysis_date"], look_back_days=2
+        )
+    assert response.startswith(vietnam.VERIFIED_SNAPSHOT_PREFIX)
+    snapshot = json.loads(response.removeprefix(vietnam.VERIFIED_SNAPSHOT_PREFIX))
+    assert snapshot["latest_ohlcv"] == {k: q["prices"][1][k] for k in ("date", "open", "high", "low", "close", "volume")}
+    assert snapshot["recent_closes"] == [
+        {"date": "2026-10-29", "close": 24900}, {"date": "2026-10-30", "close": 25100},
+    ]
+    assert snapshot["snapshot_fingerprint"] == q["fingerprint"]
+    assert "rsi" in snapshot["technical_indicators"]
+    assert "99000" not in response

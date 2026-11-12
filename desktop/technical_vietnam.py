@@ -1,5 +1,6 @@
 """Original stockstats indicators on the canonical VN completed-candle series."""
 
+import json
 import math
 from datetime import date, datetime, time, timedelta
 from urllib.parse import urlencode
@@ -166,6 +167,46 @@ def prices(bundle, start, end):
         + coverage
         + pd.DataFrame(rows).to_csv(index=False)
     )
+
+
+def verified_snapshot(bundle, asof, look_back_days=30, indicators=None):
+    """Use canonical completed candles for the upstream snapshot contract."""
+    from tradingagents.dataflows.vendors.yahoo.snapshot import DEFAULT_SNAPSHOT_INDICATORS
+
+    from desktop.vietnam import VERIFIED_SNAPSHOT_PREFIX
+
+    if asof != bundle["analysis_date"]:
+        raise ValueError("Snapshot date must match the canonical analysis date")
+    rows = [row for row in bundle["prices"] if row["date"] <= asof]
+    check_freshness(rows, bundle["ticker"], asof)
+    latest = rows[-1]
+    names = tuple(indicators or DEFAULT_SNAPSHOT_INDICATORS)
+    metrics = bundle.get("metrics", {})
+    calculated = None
+    values = {}
+    for name in names:
+        if name in metrics and metrics[name].get("asof") == latest["date"]:
+            values[name] = metrics[name]["value"]
+        elif name in INDICATORS:
+            if calculated is None:
+                calculated = wrap(pd.DataFrame(rows).set_index("date"))
+            value = float(calculated[name].iloc[-1])
+            values[name] = value if math.isfinite(value) else None
+        else:
+            values[name] = None
+    recent = rows[-max(1, min(int(look_back_days), 30)):]
+    payload = {
+        "ticker": bundle["ticker"], "analysis_date": asof,
+        "snapshot_fingerprint": bundle["fingerprint"], "currency": "VND",
+        "source": bundle.get("provider", "Vietcap completed OHLCV"),
+        "price_basis": bundle.get("price_basis", {}).get("description", _SOURCE_BASIS),
+        "latest_ohlcv": {key: latest[key] for key in ("date", *OHLC, "volume")},
+        "technical_indicators": values,
+        "recent_closes": [{"date": row["date"], "close": row["close"]} for row in recent],
+        "scope": "Completed candles only. Use dated prices to verify exact claims. "
+                 "Missing sessions and null indicators are not zero. Price scale may reflect historical adjustments.",
+    }
+    return VERIFIED_SNAPSHOT_PREFIX + json.dumps(payload, ensure_ascii=False, allow_nan=False)
 
 
 def indicator(bundle, name, asof, look_back_days=30):

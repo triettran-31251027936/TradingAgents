@@ -1570,7 +1570,9 @@ def vendor_scope(bundle, cache_dir=None):
                 return (
                     "Requested date differs from canonical snapshot; use the current analysis date."
                 )
-            return VERIFIED_SNAPSHOT_PREFIX + capsule(bundle)
+            from desktop.technical_vietnam import verified_snapshot
+
+            return verified_snapshot(bundle, asof, look_back_days, indicators)
 
         tools.build_verified_market_snapshot = verified
         yield
