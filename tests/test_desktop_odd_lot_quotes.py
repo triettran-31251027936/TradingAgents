@@ -45,3 +45,22 @@ def test_odd_lot_tape_withholds_aggregated_stale_and_reset_updates():
     tape.update("VIC|66*242.3|69*1|70*6701$", instant, instant)
     assert [(r["price_vnd"], r["shares"]) for r in tape.verified] == [(242300, 1), (242300, 1)]
     assert tape.ambiguous == 3 and tape.invalidated
+
+
+def test_odd_lot_price_can_be_reconciled_from_exact_turnover_delta():
+    from datetime import datetime
+
+    from desktop.odd_lot_quotes import OddLotTape, TZ
+
+    tape = OddLotTape("VIC", 6752, 1_648_030_100)
+    stamp = datetime(2026, 11, 12, 11, tzinfo=TZ)
+    tape.update("VIC|66*242.2|69*1|70*6753|71*1648272300$", stamp, stamp)
+    tape.update("VIC|69*7|70*6763|71*1650694300$", stamp, stamp)
+    tape.update("VIC|69*1|70*6764|71*1650936500$", stamp, stamp)
+    tape.update("VIC|69*10|70*6774|71*1653358500$", stamp, stamp)
+    tape.update("VIC|66*242.3|69*1|70*6775|71*1653600700$", stamp, stamp)
+    assert [(r["price_vnd"], r["shares"], r["price_source"]) for r in tape.verified] == [
+        (242200, 1, "explicit"), (242200, 1, "cumulative_value_delta"),
+        (242200, 10, "cumulative_value_delta"),
+    ]
+    assert tape.ambiguous == 2

@@ -6,6 +6,7 @@ import json
 import time
 
 from desktop.market_board import phase
+from desktop.paper import tick
 from desktop.vietnam import TZ, digest, symbol
 
 SOURCE = "https://prs.tvsi.com.vn/banggia/hsx/odd"
@@ -104,15 +105,17 @@ def board_row(message, ticker):
         "best_ask_vnd": _integer(fields, "82", 1000), "best_ask_shares": _integer(fields, "83"),
         "last_match_vnd": _integer(fields, "66", 1000), "last_match_shares": _integer(fields, "69"),
         "cumulative_shares": _integer(fields, "70", allow_zero=True),
+        "cumulative_value_vnd": _integer(fields, "71", allow_zero=True),
     }
 
 
 class OddLotTape:
     """Reconcile explicit prints within one uninterrupted public connection."""
 
-    def __init__(self, ticker, initial_total):
+    def __init__(self, ticker, initial_total, initial_value=None):
         self.ticker = ticker
         self.total = initial_total
+        self.value = initial_value
         self.verified = []
         self.ambiguous = 0
         self.invalidated = False
@@ -121,10 +124,18 @@ class OddLotTape:
         if self.invalidated:
             return
         fields = _row_fields(message, self.ticker)
-        if not fields or "70" not in fields:
+        if not fields:
+            return
+        if "70" not in fields:
+            if "71" in fields:
+                self.value = None
             return
         current = _integer(fields, "70", allow_zero=True)
+        current_value = _integer(fields, "71", allow_zero=True)
         previous, self.total = self.total, current
+        previous_value = self.value
+        if current != previous or "71" in fields:
+            self.value = current_value
         if previous is None or current is None or previous == current:
             return
         if current < previous:
@@ -133,9 +144,16 @@ class OddLotTape:
             return
         quantity = _integer(fields, "69")
         price = _integer(fields, "66", 1000)
+        amount = current_value - previous_value if current_value is not None and previous_value is not None else None
+        price_source = "explicit"
+        if "66" not in fields and quantity and amount is not None and amount > 0 and amount % quantity == 0:
+            price = amount // quantity
+            price_source = "cumulative_value_delta"
         if (
             quantity != current - previous
             or price is None
+            or (amount is not None and amount != price * quantity)
+            or price % tick("HOSE", price)
             or server_clock is None
             or abs((observed - server_clock).total_seconds()) > 5
             or phase(observed, "HOSE") != "continuous"
@@ -145,7 +163,8 @@ class OddLotTape:
             self.ambiguous += 1
             return
         self.verified.append({
-            "price_vnd": price, "shares": quantity,
+            "price_vnd": price, "shares": quantity, "price_source": price_source,
+            "traded_value_delta_vnd": amount,
             "previous_cumulative_shares": previous, "cumulative_shares": current,
             "observed_at": observed.isoformat(), "board_server_clock": server_clock.isoformat(),
             "frame_sha256": digest(message),
@@ -179,7 +198,10 @@ def observe(ticker, asof, *, sample_seconds=0):
                     observed = datetime.now(TZ)
                 if row is not None and stamp is not None:
                     break
-            tape = OddLotTape(name, row["cumulative_shares"] if row is not None else None)
+            tape = OddLotTape(
+                name, row["cumulative_shares"] if row else None,
+                row["cumulative_value_vnd"] if row else None,
+            )
             snapshot_clock = stamp
             end_sample = time.monotonic() + sample_seconds
             while (left := end_sample - time.monotonic()) > 0:
@@ -193,7 +215,9 @@ def observe(ticker, asof, *, sample_seconds=0):
                 elif update.get("msgType") == 2:
                     tape.update(update["message"], current_time, stamp)
                 elif update.get("msgType") == 4:
-                    tape.total = board_row(update["message"], name)["cumulative_shares"]
+                    new_snapshot = board_row(update["message"], name)
+                    tape.total = new_snapshot["cumulative_shares"]
+                    tape.value = new_snapshot["cumulative_value_vnd"]
         if row is None or snapshot_clock is None or abs((observed - snapshot_clock).total_seconds()) > 5:
             raise ValueError("No timely server clock adjacent to the board snapshot")
         if phase(observed, "HOSE") != "continuous":

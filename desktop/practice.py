@@ -459,6 +459,10 @@ class PracticeStore(Store):
                         or event["shares"] <= 0
                         or event["shares"] != event["cumulative_shares"] - event["previous_cumulative_shares"]
                         or event["price_vnd"] <= 0
+                        or (
+                            event.get("price_source") == "cumulative_value_delta"
+                            and event.get("traded_value_delta_vnd") != event["price_vnd"] * event["shares"]
+                        )
                     ):
                         continue
                     cursor = db.execute(
