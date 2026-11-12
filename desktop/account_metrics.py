@@ -95,11 +95,23 @@ def evidence(bundle, book):
         "shares",
         "Only settled/unreserved holdings supplied by the virtual account",
     )
+    odd = book.get("odd_lot_quote")
+    if odd and odd["status"] == "observed" and odd.get("best_ask_vnd") and cap is not None:
+        ask = odd["best_ask_vnd"]
+        odd_capacity = max(0, min(99, math.floor(min(
+            book["available_cash"] / (ask * (1 + book["commission"])), cap / ask
+        ))))
+        rows["max_odd_lot_shares_at_observed_ask"] = {
+            "value": odd_capacity, "unit": "shares", "quote_date": odd["observed_at"][:10],
+            "formula": "Budget and commission capacity at the TVSI odd-lot ask, capped at 99. "
+                       "Indicative only; this desktop currently requires 100-share round lots for execution.",
+        }
     return {
         "status": "available",
         "mode": book["mode"],
         "account_clock": book["clock"],
         "account_fingerprint": book["fingerprint"],
         "metrics": rows,
+        **({"odd_lot_quote": odd} if odd else {}),
         "limitations": "Reference calculations only. Any proposed order must be checked again at its actual limit, fees, current book and human approval.",
     }
