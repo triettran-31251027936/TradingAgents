@@ -6,7 +6,7 @@ import json
 import time
 
 from desktop.market_board import phase
-from desktop.vietnam import TZ, symbol
+from desktop.vietnam import TZ, digest, symbol
 
 SOURCE = "https://prs.tvsi.com.vn/banggia/hsx/odd"
 WS_URL = "wss://streamprs.tvsi.com.vn:5000/ws"
@@ -69,33 +69,95 @@ def decode(frame):
     raise ValueError("TVSI decoded message exceeds limit")
 
 
-def board_row(message, ticker):
+def _row_fields(message, ticker):
     matches = [row for row in message.split("$") if row.startswith(ticker + "|")]
+    if not matches:
+        return None
     if len(matches) != 1:
-        raise ValueError("No unique TVSI issuer row")
-    fields = dict(prop.split("*", 2)[:2] for prop in matches[0].split("|")[1:] if "*" in prop)
-    if fields.get("47") != "HSX":
-        raise ValueError("TVSI issuer is not on HOSE")
+        raise ValueError("Duplicate TVSI issuer row")
+    fields = {}
+    for prop in matches[0].split("|")[1:]:
+        if "*" not in prop:
+            continue
+        index, value, *_ = prop.split("*", 2)
+        if index in fields:
+            raise ValueError("Duplicate TVSI issuer field")
+        fields[index] = value
+    return fields
 
-    def integer(index, multiplier=1):
-        try:
-            value = Decimal(fields.get(index, "")) * multiplier
-        except InvalidOperation:
-            return None
-        return int(value) if value.is_finite() and 0 < value < 10**12 and value == int(value) else None
 
+def _integer(fields, index, multiplier=1, *, allow_zero=False):
+    try:
+        value = Decimal(fields.get(index, "")) * multiplier
+    except InvalidOperation:
+        return None
+    minimum = 0 if allow_zero else 1
+    return int(value) if value.is_finite() and minimum <= value < 10**12 and value == int(value) else None
+
+
+def board_row(message, ticker):
+    fields = _row_fields(message, ticker)
+    if not fields or fields.get("47") != "HSX":
+        raise ValueError("No unique HOSE issuer row")
     return {
-        "best_bid_vnd": integer("76", 1000), "best_bid_shares": integer("77"),
-        "best_ask_vnd": integer("82", 1000), "best_ask_shares": integer("83"),
-        "last_match_vnd": integer("66", 1000), "last_match_shares": integer("69"),
-        "cumulative_shares": integer("70"),
+        "best_bid_vnd": _integer(fields, "76", 1000), "best_bid_shares": _integer(fields, "77"),
+        "best_ask_vnd": _integer(fields, "82", 1000), "best_ask_shares": _integer(fields, "83"),
+        "last_match_vnd": _integer(fields, "66", 1000), "last_match_shares": _integer(fields, "69"),
+        "cumulative_shares": _integer(fields, "70", allow_zero=True),
     }
 
 
-def observe(ticker, asof):
+class OddLotTape:
+    """Reconcile explicit prints within one uninterrupted public connection."""
+
+    def __init__(self, ticker, initial_total):
+        self.ticker = ticker
+        self.total = initial_total
+        self.verified = []
+        self.ambiguous = 0
+        self.invalidated = False
+
+    def update(self, message, observed, server_clock):
+        if self.invalidated:
+            return
+        fields = _row_fields(message, self.ticker)
+        if not fields or "70" not in fields:
+            return
+        current = _integer(fields, "70", allow_zero=True)
+        previous, self.total = self.total, current
+        if previous is None or current is None or previous == current:
+            return
+        if current < previous:
+            self.invalidated = True
+            self.ambiguous += 1
+            return
+        quantity = _integer(fields, "69")
+        price = _integer(fields, "66", 1000)
+        if (
+            quantity != current - previous
+            or price is None
+            or server_clock is None
+            or abs((observed - server_clock).total_seconds()) > 5
+            or phase(observed, "HOSE") != "continuous"
+            or phase(server_clock, "HOSE") != "continuous"
+            or observed.date() != server_clock.date()
+        ):
+            self.ambiguous += 1
+            return
+        self.verified.append({
+            "price_vnd": price, "shares": quantity,
+            "previous_cumulative_shares": previous, "cumulative_shares": current,
+            "observed_at": observed.isoformat(), "board_server_clock": server_clock.isoformat(),
+            "frame_sha256": digest(message),
+        })
+
+
+def observe(ticker, asof, *, sample_seconds=0):
     from websockets.exceptions import WebSocketException
     from websockets.sync.client import connect
 
+    if not 0 <= sample_seconds <= 15:
+        raise ValueError("Odd-lot sample window must be between 0 and 15 seconds")
     name = symbol(ticker)
     unavailable = {"status": "unavailable", "source": SOURCE, "ticker": name + ".VN"}
     now = datetime.now(TZ)
@@ -117,13 +179,30 @@ def observe(ticker, asof):
                     observed = datetime.now(TZ)
                 if row is not None and stamp is not None:
                     break
-        if row is None or stamp is None or abs((observed - stamp).total_seconds()) > 5:
+            tape = OddLotTape(name, row["cumulative_shares"] if row is not None else None)
+            snapshot_clock = stamp
+            end_sample = time.monotonic() + sample_seconds
+            while (left := end_sample - time.monotonic()) > 0:
+                try:
+                    update = decode(ws.recv(timeout=left))
+                except TimeoutError:
+                    break
+                current_time = datetime.now(TZ)
+                if update.get("msgType") == 1:
+                    stamp = datetime.fromtimestamp(int(update["message"]) / 1000, TZ)
+                elif update.get("msgType") == 2:
+                    tape.update(update["message"], current_time, stamp)
+                elif update.get("msgType") == 4:
+                    tape.total = board_row(update["message"], name)["cumulative_shares"]
+        if row is None or snapshot_clock is None or abs((observed - snapshot_clock).total_seconds()) > 5:
             raise ValueError("No timely server clock adjacent to the board snapshot")
         if phase(observed, "HOSE") != "continuous":
             raise ValueError("HOSE continuous session has ended")
         return {
             **unavailable, **row, "status": "observed",
-            "observed_at": observed.isoformat(), "board_server_clock": stamp.isoformat(),
+            "observed_at": observed.isoformat(), "board_server_clock": snapshot_clock.isoformat(),
+            "sample": {"seconds": sample_seconds, "reconciled_updates": tape.verified,
+                       "ambiguous_updates": tape.ambiguous},
             "scope": "Odd-lot board snapshot. Observation/server time is not an exchange trade timestamp. "
                      "Displayed quantity is indicative; odd-lot execution is not enabled.",
         }

@@ -88,7 +88,7 @@ def prepare(
             if quant["exchange"] == "HOSE":
                 from desktop.odd_lot_quotes import observe
 
-                book["odd_lot_quote"] = observe(ticker, asof)
+                book["odd_lot_quote"] = observe(ticker, asof, sample_seconds=2)
             # Approval fingerprints intentionally omit orders. Checkpoints need
             # the entire model-visible book, including pending/unapproved orders
             # and settlement availability even when cash/total positions match.
@@ -441,6 +441,12 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                 f"cho {cell(quote.get('best_ask_shares'))} cổ phiếu hiển thị. "
                 f"{cell(quote['source'])}\n\n"
                 "Số liệu tham khảo để tính sức mua. Bộ mô phỏng hiện thực thi lô chẵn.\n"
+            )
+            if sample := quote.get("sample"):
+                text += (
+                    f"\nTrong {sample['seconds']} giây quan sát, có "
+                    f"{len(sample['reconciled_updates'])} cập nhật khớp với tăng khối lượng lũy kế "
+                    f"và {sample['ambiguous_updates']} cập nhật chưa đối chiếu được.\n"
             )
         text += "\n### Virtual-account risk and reference sizing\n\n| Metric | Value | Unit | Formula |\n|---|---:|---|---|\n"
         for name, m in account["metrics"].items():
