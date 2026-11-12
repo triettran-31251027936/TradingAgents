@@ -593,7 +593,8 @@ def test_news_prompt_keeps_full_tool_response_and_removes_only_identical_snapsho
     system, output = runtime.prompt([msg], "News Analyst")
     assert output == msg
     assert exact["excerpt"] not in system.content
-    assert '"record_ids_in_get_global_news": ["one"]' in system.content
+    snapshot, _ = json.JSONDecoder().raw_decode("{" + system.content.split("\n{", 1)[1])
+    assert snapshot["market_news"]["record_ids_in_get_global_news"] == ["one"]
     assert changed["excerpt"] in system.content and untouched["excerpt"] in system.content
     assert q["market_news"]["records"] == [exact, changed, untouched]
     for role in ("Market Analyst", "Portfolio Manager"):
@@ -619,3 +620,35 @@ def test_fifty_two_week_extrema_require_coverage_and_exclude_older_bars():
     short_history, _ = vietnam.compute(rows[1:], book)
     assert short_history["high_52w"]["value"] is None
     assert short_history["low_52w"]["value"] is None
+
+
+def test_compact_capsule_shares_exact_repeated_metadata_without_changing_tool_output():
+    q = bundle()
+    q["metrics"] = {
+        f"example_{n}": {
+            "value": n, "unit": "fraction", "source": "A long shared financial source URL",
+            "formula": "A long repeated reporting definition", "asof": "2026-Q1",
+        }
+        for n in range(4)
+    }
+    q["domestic_macro"] = {
+        "series": {
+            f"series_{n}": {"unit": "index", "source_url": "https://example.test/shared-long",
+                            "latest": {"value": n}, "scope": "A repeated series scope"}
+            for n in range(4)
+        }
+    }
+    original = vietnam.capsule(q)
+    compact = vietnam.capsule(q, compact=True)
+    assert len(compact) < len(original)
+    reconstructed = json.loads(compact)
+    refs = reconstructed.pop("metric_metadata_refs")
+    macro = reconstructed["domestic_macro"]
+    series_refs = macro.pop("series_metadata_refs")
+    for records, references in [(reconstructed["metrics"], refs), (macro["series"], series_refs)]:
+        for record in records.values():
+            for field, value in record.items():
+                if isinstance(value, str) and value in references:
+                    record[field] = references[value]
+    assert reconstructed == json.loads(original)
+    assert vietnam.capsule(q) == original

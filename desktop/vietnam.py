@@ -1287,6 +1287,38 @@ def _metric_references(section, canonical):
     }
 
 
+def _share_evidence_metadata(records, fields, prefix):
+    """Keep values/units inline, and reference exact repeated metadata strings."""
+    from collections import Counter
+
+    counts = Counter(
+        value
+        for record in records.values()
+        for field in fields
+        if isinstance(value := record.get(field), str)
+    )
+    existing = {value for record in records.values() for value in record.values() if isinstance(value, str)}
+    references = {}
+    for value, count in counts.items():
+        if count < 3 or len(value) < 12:
+            continue
+        reference = f"@{prefix}{len(references) + 1}"
+        if reference in existing:
+            # Preserve any provider string that already uses reference syntax.
+            return records, {}
+        references[value] = reference
+    if not references:
+        return records, {}
+    compacted = {
+        name: {
+            field: references.get(value, value) if field in fields and isinstance(value, str) else value
+            for field, value in record.items()
+        }
+        for name, record in records.items()
+    }
+    return compacted, {reference: value for value, reference in references.items()}
+
+
 def capsule(bundle, *, compact=False):
     from desktop.macro_vietnam import summary as macro_summary
 
@@ -1318,10 +1350,27 @@ def capsule(bundle, *, compact=False):
     if bundle.get("debt_notes"):
         decoded["debt_notes"] = bundle["debt_notes"]
     canonical = bundle.get("metrics", {})
+    if compact and canonical:
+        metric_records, metric_metadata = _share_evidence_metadata(
+            canonical, ("formula", "source", "asof", "published", "retrieved_at"), "m"
+        )
+        if metric_metadata:
+            decoded["metrics"] = metric_records
+            decoded["metric_metadata_refs"] = metric_metadata
     if bundle.get("domestic_macro"):
         macro = macro_summary(bundle["domestic_macro"])
         if compact and "official_releases" in macro:
             macro["official_releases"] = _metric_references(macro["official_releases"], canonical)
+        if compact:
+            series, shared = _share_evidence_metadata(
+                macro["series"],
+                ("scope", "source_url", "source_sha256", "first_observed_at", "retrieved_at",
+                 "prepared_at", "server_modified_at", "content_timestamp", "freshness_policy"),
+                "s",
+            )
+            if shared:
+                macro["series"] = series
+                macro["series_metadata_refs"] = shared
         decoded["domestic_macro"] = macro
     if bundle.get("insider_dealings"):
         from desktop.insider_vietnam import summary as insider_summary
@@ -1342,7 +1391,9 @@ def capsule(bundle, *, compact=False):
         from desktop.market_news_vietnam import summary as market_news_summary
 
         decoded["market_news"] = market_news_summary(bundle["market_news"])
-    return json.dumps(decoded, ensure_ascii=False, allow_nan=False)
+    return json.dumps(
+        decoded, ensure_ascii=False, allow_nan=False, separators=(",", ":") if compact else None
+    )
 
 
 @contextmanager
