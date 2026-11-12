@@ -52,6 +52,34 @@ const context={require:name=>name==='electron'?electron:name==='node:child_proce
 
   await assert.rejects(send('paper_approve',{id:preview.id}),/Unsupported desktop action/);
   await assert.rejects(send('start',{action:'paper_approve'}),/Unsupported TradingAgents job/);
+  let liveOrder={id:preview.id,status:'PROPOSED'};
+  const calls=[];
+  const renderContext={
+   node:(tag,style,text)=>({tag,style,textContent:text,children:[],setAttribute(){},append(...children){this.children.push(...children);}}),
+   state:{busy:false},navigate(){},notice(){},guard:fn=>fn,formatNumber:value=>String(value),
+   api:async (action,payload)=>{
+    calls.push({action,payload});
+    if(action==='paper_snapshot')return {orders:[liveOrder]};
+    if(action==='paper_review'){liveOrder={...liveOrder,status:'APPROVED'};return {message:'Approved'};}
+    throw Error('Unexpected renderer request');
+   },
+  };
+  const source=fs.readFileSync(path.join(actual,'app.js'),'utf8');
+  vm.runInNewContext(source.slice(source.indexOf('function paperOrderStatus(')),renderContext);
+  const panel=renderContext.paperOrderStatus(preview);
+  await new Promise(resolve=>setImmediate(resolve));
+  const [label,actions]=panel.children;
+  const [review,,refresh]=actions.children;
+  assert.equal(label.textContent,'Đang chờ bạn duyệt');
+  assert.equal(review.hidden,false);
+  await review.onclick();
+  assert.equal(calls.find(x=>x.action==='paper_review').payload.id,preview.id);
+  assert.equal(review.hidden,true);
+  assert.match(label.textContent,/Đã gửi vào bộ mô phỏng/);
+  liveOrder={...liveOrder,status:'FILLED',result:{filled_quantity:6,fill_price:62500}};
+  await refresh.onclick();
+  assert.match(label.textContent,/Đã khớp mô phỏng.*6 cổ phiếu/);
+  assert.ok(!calls.some(x=>x.action==='paper_approve'),'report renderer never submits without native consent');
   console.log('Electron main: startup gate, environment isolation, cancel/confirm and renderer approval protection passed');
  }finally{fs.rmSync(tmp,{recursive:true,force:true});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

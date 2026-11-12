@@ -27,3 +27,5 @@
 .execution-grid dd{margin:4px 0 0;font-weight:600;font-size:15px;overflow-wrap:anywhere}
 @media(max-width:600px){.execution-grid{grid-template-columns:1fr}.report-reader-actions{width:100%}}
 @media(min-width:1101px){.analysis-layout>.controls{position:sticky;top:12px;max-height:calc(100vh - 84px);overflow:auto}}
+.report-paper-status{margin-top:16px;padding:14px 16px;border:1px solid var(--line);border-radius:10px}
+.report-paper-status .key-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
