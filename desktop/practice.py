@@ -33,7 +33,7 @@ def local(value):
     return dt.astimezone(TZ)
 
 
-def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH):
+def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH, *, odd_events=None):
     """Rebuild from frozen completed bars; an order is created after human approval."""
     now = local(now)
     cerebro = bt.Cerebro(stdstats=False)
@@ -43,32 +43,54 @@ def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH):
     sessions = set()
     results = {}
     eligible = {}
-    for ticker, rows in frames.items():
+    odd_events = odd_events or {}
+    event_by_second = {}
+    event_remaining = {}
+
+    class TradingFeed(bt.feeds.PandasData):
+        lines = ("event_kind",)
+        params = (("event_kind", "event_kind"),)
+
+    for ticker in sorted(set(frames) | set(odd_events)):
+        rows = frames.get(ticker, [])
         rows = [
             r for r in rows
             if r["time"] + 60 <= now.timestamp() and r.get("complete", True)
             and trading_day(datetime.fromtimestamp(r["time"], TZ).date())
         ]
-        if not rows:
+        timed = [{**row, "end": row["time"] + 60, "event_kind": 0} for row in rows]
+        occupied = {row["end"] for row in timed}
+        for event in odd_events.get(ticker, ()):
+            stamp = local(event["observed_at"])
+            end = int(stamp.timestamp())
+            if end in occupied:
+                continue
+            occupied.add(end)
+            price = event["price_vnd"]
+            timed.append({"end": end, "open": price, "high": price, "low": price,
+                          "close": price, "volume": event["shares"], "event_kind": 1})
+            event_by_second[(ticker, end)] = event
+            event_remaining[(ticker, end)] = event["shares"]
+        if not timed:
             continue
-        frame = pd.DataFrame(rows)
+        frame = pd.DataFrame(sorted(timed, key=lambda row: row["end"]))
         index = (
-            pd.to_datetime(frame.pop("time") + 60, unit="s", utc=True)
+            pd.to_datetime(frame.pop("end"), unit="s", utc=True)
             .dt.tz_convert(TZ)
             .dt.tz_localize(None)
         )
         frame.index = pd.DatetimeIndex(index)
-        frame = frame[["open", "high", "low", "close", "volume"]]
+        frame = frame[["open", "high", "low", "close", "volume", "event_kind"]]
         sessions.update(
             x.date().isoformat()
             for x in frame.index
             if x.date() < now.date() or now.time() >= daytime(15)
         )
         feeds[ticker] = cerebro.adddata(
-            bt.feeds.PandasData(dataname=frame, timeframe=bt.TimeFrame.Minutes, compression=1),
+            TradingFeed(dataname=frame, timeframe=bt.TimeFrame.Seconds, compression=1),
             name=ticker,
         )
-    if not feeds:
+    if not feeds and not orders:
         return {
             "cash": initial_cash,
             "nav": initial_cash,
@@ -79,6 +101,21 @@ def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH):
 
     def filler(order, price, ago):
         end = order.data.datetime.datetime(ago).replace(tzinfo=TZ)
+        is_odd = order.info.get("lot") == "odd"
+        is_event = bool(order.data.event_kind[ago])
+        if is_odd != is_event:
+            return 0
+        if is_odd:
+            key = (order.data._name, round(end.timestamp()))
+            event = event_by_second[key]
+            approved = local(order.info["approved_at"])
+            if end.date() != approved.date() or min(
+                local(event["observed_at"]), local(event["board_server_clock"])
+            ) <= approved:
+                return 0
+            quantity = min(abs(order.executed.remsize), event_remaining[key])
+            event_remaining[key] -= quantity
+            return quantity
         # Never match auctions or fabricated/missing minutes.
         if (
             phase(
@@ -106,9 +143,13 @@ def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH):
                 if data is None or not len(data) or order["id"] in self.sent:
                     continue
                 end = data.datetime.datetime(0).replace(tzinfo=TZ)
-                if end < local(order["approved_at"]):
+                approved = local(order["approved_at"])
+                if end < approved or (order.get("lot") == "odd" and end.date() != approved.date()):
                     continue
-                if phase(end - pd.Timedelta(seconds=1), order["exchange"]) != "continuous":
+                is_event = bool(data.event_kind[0])
+                if is_event and order.get("lot") != "odd":
+                    continue
+                if phase(end - pd.Timedelta(seconds=0 if is_event else 1), order["exchange"]) != "continuous":
                     continue
                 expiry = datetime.combine(
                     end.date(), daytime(14, 45) if order["exchange"] != "UPCOM" else daytime(15)
@@ -121,7 +162,8 @@ def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH):
                     exectype=bt.Order.Limit,
                     valid=expiry,
                 )
-                placed.addinfo(paper_id=order["id"], exchange=order["exchange"])
+                placed.addinfo(paper_id=order["id"], exchange=order["exchange"],
+                               lot=order.get("lot"), approved_at=order["approved_at"])
                 self.sent.add(order["id"])
                 eligible[order["id"]] = end.date().isoformat()
 
@@ -141,7 +183,7 @@ def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH):
             }
 
     cerebro.addstrategy(Strategy)
-    strategy = cerebro.run(runonce=False, preload=True)[0]
+    strategy = cerebro.run(runonce=False, preload=True)[0] if feeds else None
     positions = {}
     for ticker, data in feeds.items():
         held = strategy.getposition(data)
@@ -168,7 +210,10 @@ def run_broker(orders, frames, now, exchanges, initial_cash=STARTING_CASH):
             row["state"] = "FILLED"
         elif row["state"] in ("SUBMITTED", "ACCEPTED", "PARTIAL"):
             row["state"] = "APPROVED"
-        day = eligible.get(order["id"])
+        day = (
+            local(order["approved_at"]).date().isoformat()
+            if order.get("lot") == "odd" else eligible.get(order["id"])
+        )
         close = daytime(15) if order["exchange"] == "UPCOM" else daytime(14, 45)
         if (
             (
@@ -200,7 +245,11 @@ class PracticeStore(Store):
         with self.connect() as db:
             db.executescript("""CREATE TABLE IF NOT EXISTS minute_bars(ticker TEXT NOT NULL,time INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(ticker,time));
             CREATE TABLE IF NOT EXISTS marks(ticker TEXT PRIMARY KEY,payload TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS processed_approvals(order_id TEXT PRIMARY KEY);""")
+            CREATE TABLE IF NOT EXISTS processed_approvals(order_id TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS odd_lot_events(
+                ticker TEXT NOT NULL, day TEXT NOT NULL, cumulative INTEGER NOT NULL,
+                payload TEXT NOT NULL, PRIMARY KEY(ticker,day,cumulative)
+            );""")
 
     @staticmethod
     def proposal_expired(order, today):
@@ -217,8 +266,9 @@ class PracticeStore(Store):
             engine="Backtrader / BackBroker · real completed minute bars",
             starting_capital=STARTING_CASH,
             board_lot=100,
+            odd_lot_enabled=True,
             allow_margin=False,
-            policy="Practice-only allocation can use up to100% of this3M virtual account. Whole lots100; no fractional or fake odd-lot liquidity. No deposits or real orders.",
+            policy="Practice-only allocation can use up to100% of this3M virtual account. HOSE permits 1–99 shares using reconciled odd-lot prints. Round lots use separate minute bars. No deposits or real orders.",
         )
         book["fingerprint"] = digest(
             {k: v for k, v in book.items() if k not in ("orders", "fingerprint")}
@@ -263,6 +313,15 @@ class PracticeStore(Store):
                 "data_gaps": intent["data_gaps"],
                 "mode": "local_backtrader_live_minutes",
             }
+            if type(intent["quantity"]) is int and 0 < intent["quantity"] < 100 and exchange == "HOSE":
+                quote = bundle.get("odd_lot_quote") or {}
+                if (
+                    quote.get("status") != "observed"
+                    or quote.get("ticker") != bundle["ticker"]
+                    or str(quote.get("observed_at", ""))[:10] != today
+                ):
+                    raise ValueError("Cần báo giá lô lẻ TVSI đúng mã và ngày trước khi tạo đề xuất.")
+                order["lot"] = "odd"
             validate_order(order, book)
             for key in ("close", "adv20", "volatility20_annual", "historical_var95_1d"):
                 if bundle["metrics"][key]["value"] is None:
@@ -291,6 +350,11 @@ class PracticeStore(Store):
         preview["matching"] = (
             "TIỀN ẢO · BackBroker: chỉ nến phút đã đóng sau lúc bạn duyệt; tối đa1% volume phút, lô100; bỏ phiên đấu giá; hết hạn cuối phiên đủ điều kiện đầu tiên. Không phải lệnh tại sàn thật."
         )
+        if preview["order"].get("lot") == "odd":
+            preview["matching"] = (
+                "TIỀN ẢO · Lô lẻ HOSE. Chỉ dùng giá và khối lượng khớp TVSI đã đối chiếu sau khi duyệt, "
+                "không dùng nến lô chẵn. Lệnh hết hạn cuối ngày duyệt. Dữ liệu gộp có thể làm lệnh không khớp."
+            )
         preview["starting_capital"] = STARTING_CASH
         preview["preview_hash"] = digest({k: v for k, v in preview.items() if k != "preview_hash"})
         return preview
@@ -306,6 +370,8 @@ class PracticeStore(Store):
         result["message"] = (
             "Đã duyệt lệnh TIỀN ẢO. Chờ nến phút thật sau thời điểm duyệt; chưa có lệnh tại sàn thật."
         )
+        if preview["order"].get("lot") == "odd":
+            result["message"] = "Đã duyệt lệnh lô lẻ TIỀN ẢO. Đang chờ cập nhật TVSI hợp lệ sau khi duyệt."
         return result
 
     def reject(self, order_id):
@@ -318,7 +384,7 @@ class PracticeStore(Store):
             "Tài khoản3 triệu dùng nến phút thị trường thật; không chạy lại bằng đồng hồ replay ngày."
         )
 
-    def sync(self, boards, *, now=None):
+    def sync(self, boards, *, now=None, odd_quotes=None):
         now = local(now or datetime.now(TZ))
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -378,6 +444,28 @@ class PracticeStore(Store):
                         "INSERT OR REPLACE INTO marks VALUES(?,?)", (ticker, json.dumps(mark))
                     )
                     changed = True
+            for ticker, quote in (odd_quotes or {}).items():
+                if quote.get("status") != "observed" or quote.get("ticker") != ticker:
+                    continue
+                for event in quote.get("sample", {}).get("reconciled_updates", []):
+                    observed = local(event["observed_at"])
+                    server_clock = local(event["board_server_clock"])
+                    if (
+                        not server_clock.date() == observed.date() == now.date()
+                        or max(server_clock, observed) > now
+                        or abs((observed - server_clock).total_seconds()) > 5
+                        or phase(server_clock, "HOSE") != "continuous"
+                        or phase(observed, "HOSE") != "continuous"
+                        or event["shares"] <= 0
+                        or event["shares"] != event["cumulative_shares"] - event["previous_cumulative_shares"]
+                        or event["price_vnd"] <= 0
+                    ):
+                        continue
+                    cursor = db.execute(
+                        "INSERT OR IGNORE INTO odd_lot_events VALUES(?,?,?,?)",
+                        (ticker, today, event["cumulative_shares"], json.dumps(event)),
+                    )
+                    changed = changed or bool(cursor.rowcount)
             approved_rows = list(
                 db.execute("SELECT * FROM orders WHERE approved_at IS NOT NULL ORDER BY approved_at,id")
             )
@@ -406,6 +494,8 @@ class PracticeStore(Store):
                 # Still replay its frozen fills and verify the terminal receipt below.
                 if prior_results[order["id"]].get("state") in FINAL_ORDER_STATES:
                     continue
+                if order.get("lot") == "odd":
+                    continue
                 rows = frames.get(order["ticker"], [])
                 approved = local(order["approved_at"])
                 relevant = [
@@ -432,7 +522,12 @@ class PracticeStore(Store):
                                     )
                             cursor += timedelta(minutes=1)
                         cursor = endpoint + timedelta(minutes=1)
-            result = run_broker(orders, frames, now, exchanges, before["initial_cash"])
+            odd_events = {}
+            for row in db.execute("SELECT ticker,payload FROM odd_lot_events ORDER BY day,cumulative"):
+                odd_events.setdefault(row["ticker"], []).append(json.loads(row["payload"]))
+            result = run_broker(
+                orders, frames, now, exchanges, before["initial_cash"], odd_events=odd_events
+            )
             result["sessions"] = sorted(set(result["sessions"]) | valid_prior_days | reported_days)
             # Mark held shares to the latest real trade, while fills only use final bars.
             for ticker, p in result["positions"].items():
@@ -448,7 +543,7 @@ class PracticeStore(Store):
                 p["market_value"] for p in result["positions"].values()
             )
             for order in orders:
-                if order["ticker"] not in frames:
+                if order.get("lot") != "odd" and order["ticker"] not in frames:
                     raise ValueError("Thiếu nến của lệnh đã duyệt; không tự tái tạo giao dịch.")
                 existing = prior_results[order["id"]]
                 current = result["orders"][order["id"]]
@@ -482,7 +577,7 @@ class PracticeStore(Store):
                     json.dumps(
                         {
                             "ticker_count": len(boards),
-                            "source": "real completed minute OHLCV",
+                            "source": "real completed minute OHLCV and reconciled TVSI odd-lot updates",
                             "human_approved_orders": len(orders),
                         }
                     ),

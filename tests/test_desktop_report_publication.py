@@ -97,7 +97,7 @@ def test_blocked_proposal_does_not_commit_account_changes(tmp_path, store_type):
     folder.mkdir()
     invalid = decision()
     invalid["execution"]["quantity"] = (
-        1  # Whole-lot validation fails after legacy clock initialization.
+        101  # Mixed-lot validation fails after legacy clock initialization.
     )
     with integration.report_publication(folder, store) as writer:
         with pytest.raises(ValueError):

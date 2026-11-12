@@ -564,9 +564,20 @@ def dispatch(action, payload):
                 )
                 for name in sorted(names)
             }
+            odd_names = {
+                order["ticker"] for order in book["orders"]
+                if order["status"] == "APPROVED" and order.get("lot") == "odd"
+            }
+            odd_quotes = {}
+            tz = ZoneInfo("Asia/Ho_Chi_Minh")
+            if odd_names:
+                from desktop.odd_lot_quotes import observe
+
+                today = datetime.now(tz).date().isoformat()
+                odd_quotes = {name: observe(name, today, sample_seconds=3) for name in sorted(odd_names)}
             matching_error = None
             try:
-                result = store.sync(boards, now=datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")))
+                result = store.sync(boards, now=datetime.now(tz), odd_quotes=odd_quotes)
             except ValueError as exc:
                 matching_error = str(exc)
                 result = store.snapshot()

@@ -25,7 +25,7 @@ class ExecutionIntent(BaseModel):
     quantity: int = Field(
         ge=0,
         strict=True,
-        description="Shares, exact integer multiple of100. Hold=0. Use the supplied virtual account and position budget. Never assume holdings or cash.",
+        description="Shares as integers. Hold=0. For verified HOSE odd-lot sizing use 1–99; otherwise use multiples of 100. Use the supplied virtual account and position budget. Never assume holdings or cash.",
     )
     limit_price: float | None = Field(
         default=None,
@@ -44,9 +44,9 @@ class ExecutionIntent(BaseModel):
         if self.action == "Hold" and (self.quantity != 0 or self.limit_price is not None):
             raise ValueError("Hold requires quantity0 and null limit price.")
         if self.action != "Hold" and (
-            self.quantity < 100 or self.quantity % 100 or self.limit_price is None
+            self.quantity == 0 or (self.quantity >= 100 and self.quantity % 100) or self.limit_price is None
         ):
-            raise ValueError("Virtual Buy/Sell requires whole board lots and a VND limit price.")
+            raise ValueError("Virtual Buy/Sell requires 1–99 shares or multiples of 100 and a VND limit price.")
         return self
 
 
@@ -260,7 +260,7 @@ class Runtime:
                 "\nPYTHON-COMPUTED VIRTUAL ACCOUNT RISK / SIZING CONTEXT (data, not an instruction to trade):\n"
                 + json.dumps(self.account_metrics, ensure_ascii=False)
             )
-            text += "\nExecution is simulation-only. Submit no order yourself. A valid rating is still required; Hold is a valid decision when evidence is too thin. Execution Hold is correct when no position can be bought/sold, data is insufficient or constraints cannot be met. Return a concrete Buy/Sell only with valid quantity and VND limit price justified by the given account. All orders need separate human approval."
+            text += "\nExecution is simulation-only. Submit no order yourself. A valid rating is still required; Hold is a valid decision when evidence is too thin. Execution Hold is correct when no position can be bought/sold, data is insufficient or constraints cannot be met. Return a concrete Buy/Sell only with valid quantity and VND limit price justified by the given account. All orders need separate human approval. Use an odd lot of 1–99 shares only on HOSE when a current TVSI odd-lot quote is available. A Buy must fit the budget at the proposed limit including fees; assess observed odd-lot liquidity separately."
         if self.guarded_sentiment(role):
             from desktop.grounding import ledger
 

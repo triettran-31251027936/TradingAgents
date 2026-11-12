@@ -687,3 +687,58 @@ def test_stale_unapproved_proposal_expires_without_market_sync(tmp_path, monkeyp
         sign(store, preview, monkeypatch)
     with pytest.raises(ValueError, match="hết hạn"):
         store.reject(order_id)
+
+
+def test_hose_odd_lot_uses_only_reconciled_post_approval_prints(tmp_path, monkeypatch):
+    from desktop import paper, practice
+
+    clock = [moment("09:16:30")]
+
+    class TradeClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0].astimezone(tz)
+
+    monkeypatch.setattr(practice, "datetime", TradeClock)
+    monkeypatch.setattr(paper, "_utc", lambda: clock[0].isoformat())
+    store = PracticeStore(tmp_path)
+    ticker = "VHM.VN"
+    bundle = {
+        "ticker": ticker, "analysis_date": DAY, "fingerprint": "isolated",
+        "prices": [{"date": DAY, "close": 62500}],
+        "odd_lot_quote": {"status": "observed", "ticker": ticker, "observed_at": clock[0].isoformat()},
+        "metrics": {key: {"value": 1} for key in (
+            "close", "adv20", "volatility20_annual", "historical_var95_1d"
+        )},
+    }
+    decision = {"execution": {"action": "Buy", "quantity": 3, "limit_price": 62600,
+                             "rationale": "Isolated VHM", "data_gaps": []}}
+    preview = store.proposal("test", decision, bundle, "HOSE")
+    assert preview["order"]["lot"] == "odd"
+    assert sign(store, preview, monkeypatch)["status"] == "APPROVED"
+    candles = {ticker: board([bar(f"09:{minute}:00", 62000) for minute in range(15, 19)])}
+    without_odd = store.sync(candles, now=moment("09:19:00"))
+    assert without_odd["orders"][0]["result"]["filled_quantity"] == 0
+
+    def event(clock, previous, quantity, price=62500):
+        stamp = moment(clock).isoformat()
+        return {"observed_at": stamp, "board_server_clock": stamp, "price_vnd": price,
+                "shares": quantity, "cumulative_shares": previous + quantity,
+                "previous_cumulative_shares": previous}
+
+    quote = {"ticker": ticker, "status": "observed", "sample": {"reconciled_updates": [
+        event("09:16:20", 90, 3), event("09:17:14", 93, 1), event("09:17:16", 94, 2),
+    ]}}
+    result = store.sync(candles, now=moment("09:19:00"), odd_quotes={ticker: quote})
+    receipt = result["orders"][0]["result"]
+    assert receipt["state"] == "FILLED" and receipt["filled_quantity"] == 3
+    assert receipt["fill_price"] == 62500 and receipt["fee"] == pytest.approx(281.25)
+    assert result["cash"] == pytest.approx(2_812_218.75)
+    assert result["positions"][ticker]["available_quantity"] == 0
+    retried = store.sync(candles, now=moment("09:19:01"), odd_quotes={ticker: quote})
+    assert retried["orders"][0]["result"] == receipt
+    settled = store.sync(
+        {ticker: {**candles[ticker], "completed_sessions": [DAY, "2026-11-02", "2026-11-03"]}},
+        now=datetime(2026, 11, 3, 15, tzinfo=TZ),
+    )
+    assert settled["positions"][ticker]["available_quantity"] == 3

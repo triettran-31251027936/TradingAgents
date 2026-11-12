@@ -43,7 +43,8 @@ def tick(exchange, price):
 def validate_order(order, book):
     quantity = order["quantity"]
     price = order["limit_price"]
-    if type(quantity) is not int or quantity <= 0 or quantity % 100:
+    odd = order.get("lot") == "odd" and book.get("odd_lot_enabled") and order["exchange"] == "HOSE"
+    if type(quantity) is not int or quantity <= 0 or (quantity >= 100 if odd else quantity % 100):
         raise ValueError("Lệnh tiền ảo cần số cổ phiếu nguyên, bội số100.")
     if not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0:
         raise ValueError("Giá giới hạn phải là số VND/cổ phiếu dương.")

@@ -199,8 +199,10 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
                     }
                 else:
                     try:
+                        quote = (runtime.account_metrics or {}).get("odd_lot_quote")
+                        order_evidence = {**quant, "odd_lot_quote": quote} if quote else quant
                         result["paper_proposal"] = store.proposal(
-                            report_id, runtime.decision, quant, quant["exchange"]
+                            report_id, runtime.decision, order_evidence, quant["exchange"]
                         )
                     except ValueError as exc:
                         result["paper_proposal"] = {"status": "BLOCKED", "reason": str(exc)}
@@ -440,7 +442,7 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                 f"Giá bán tốt nhất {cell(quote.get('best_ask_vnd'))} VND/cp "
                 f"cho {cell(quote.get('best_ask_shares'))} cổ phiếu hiển thị. "
                 f"{cell(quote['source'])}\n\n"
-                "Số liệu tham khảo để tính sức mua. Bộ mô phỏng hiện thực thi lô chẵn.\n"
+                "Số liệu tham khảo để tính sức mua. Lệnh lô lẻ cần duyệt và chỉ khớp theo cập nhật TVSI đã đối chiếu sau đó.\n"
             )
             if sample := quote.get("sample"):
                 text += (

@@ -204,7 +204,7 @@ def observe(ticker, asof, *, sample_seconds=0):
             "sample": {"seconds": sample_seconds, "reconciled_updates": tape.verified,
                        "ambiguous_updates": tape.ambiguous},
             "scope": "Odd-lot board snapshot. Observation/server time is not an exchange trade timestamp. "
-                     "Displayed quantity is indicative; odd-lot execution is not enabled.",
+                     "Displayed quantity is indicative and does not itself trigger a simulated fill.",
         }
     except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError, WebSocketException) as exc:
         return {**unavailable, "reason": type(exc).__name__}

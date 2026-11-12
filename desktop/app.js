@@ -304,7 +304,7 @@ function syncRolePicker(){
 function executionSummary(data){
  const decision=data?.decision,intent=decision?.execution;
  if(!intent||!['Buy','Sell','Hold'].includes(intent.action)||!Number.isInteger(intent.quantity)||intent.quantity<0)return null;
- if(intent.action==='Hold'?(intent.quantity!==0||intent.limit_price!=null):(intent.quantity<100||intent.quantity%100!==0||!Number.isFinite(intent.limit_price)||intent.limit_price<=0))return null;
+ if(intent.action==='Hold'?(intent.quantity!==0||intent.limit_price!=null):(intent.quantity<1||(intent.quantity>=100&&intent.quantity%100!==0)||!Number.isFinite(intent.limit_price)||intent.limit_price<=0))return null;
  const section=node('section','role-execution');section.setAttribute('aria-label','Quyết định tiền ảo trong báo cáo');
  section.append(node('h3','','Quyết định tiền ảo'),node('p','help','Theo báo cáo đã chọn · chưa phải giao dịch đã thực hiện.'));
  const grid=node('dl','execution-grid');

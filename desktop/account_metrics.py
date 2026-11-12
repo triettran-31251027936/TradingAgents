@@ -104,7 +104,7 @@ def evidence(bundle, book):
         rows["max_odd_lot_shares_at_observed_ask"] = {
             "value": odd_capacity, "unit": "shares", "quote_date": odd["observed_at"][:10],
             "formula": "Budget and commission capacity at the TVSI odd-lot ask, capped at 99. "
-                       "Indicative only; this desktop currently requires 100-share round lots for execution.",
+                       "Indicative only; an approved HOSE odd lot matches only reconciled subsequent TVSI data.",
         }
     return {
         "status": "available",
