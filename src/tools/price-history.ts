@@ -77,8 +77,8 @@ export function priceHistoryTool(history: PriceHistory, clock: Clock) {
   return defineTool({
     name: "price_history",
     description:
-      "Daily open, high, low, close and volume of one instrument (a US-listed security, a futures contract, a crypto " +
-      "pair or a price series), oldest first; security prices are adjusted for splits and dividends. For a currency " +
+      "Daily open, high, low, close and volume of one instrument, oldest first. Use a .VN suffix for Vietnamese " +
+      "stocks (VHM.VN) and VNINDEX for their benchmark. Read price_basis before interpreting historical prices. For a currency " +
       `pair, its daily reference rates instead. Reference the whole result (${referenceTo("e7")}) in returns_risk and beta for ` +
       `returns, volatility, drawdown, VaR and beta, or a column (${referenceTo("e7", "closes")}) in calc. Pages back with \`end\`.`,
     kind: "data",

@@ -27,6 +27,7 @@ import { ROUTES } from "../data/routes.js";
 import { TauricApplications } from "../data/tauric/applications.js";
 import { TauricClient } from "../data/tauric/client.js";
 import { tauricProvider } from "../data/tauric/provider.js";
+import { vietcapProvider } from "../data/vietcap/provider.js";
 import { yahooProvider } from "../data/yahoo/provider.js";
 import { ChatGPTAuth } from "../models/chatgpt-auth.js";
 import { type ProviderDeps, providerOf } from "../models/providers.js";
@@ -257,7 +258,7 @@ export function createEngine(settings: EngineSettings): Engine {
   });
 }
 
-/** The providers a setup has: Tauric with a key; Yahoo and Polymarket need none. */
+/** Tauric needs a key. Vietcap daily charts, Yahoo and Polymarket do not. */
 export function dataProviders(
   settings: Pick<EngineSettings, "tauricKey" | "fetch">,
   clock: Clock = () => new Date(),
@@ -274,6 +275,7 @@ export function dataProviders(
         }
       : {}),
     yahoo: yahooProvider({ now: clock, ...(settings.fetch ? { fetch: settings.fetch } : {}) }),
+    vietcap: vietcapProvider({ now: clock, ...(settings.fetch ? { fetch: settings.fetch } : {}) }),
     polymarket: polymarketProvider(new PolymarketClient(settings.fetch ?? fetch)),
   };
 }

@@ -18,6 +18,7 @@ import {
 } from "./capabilities.js";
 import { DataError, type DataErrorKind, LISTING_STATE_CODES } from "./errors.js";
 import { type ProviderName, ROUTES } from "./routes.js";
+import { vietnamTicker } from "./vietcap/provider.js";
 
 /** Kinds after which the next provider is asked. */
 const NEXT: ReadonlySet<DataErrorKind> = new Set([
@@ -61,7 +62,12 @@ type Routed = {
 };
 
 type Method = (...args: unknown[]) => Promise<unknown>;
-type Link = { source: string; implementation: Partial<Record<string, Method>>; syncs?: true };
+type Link = {
+  provider: ProviderName;
+  source: string;
+  implementation: Partial<Record<string, Method>>;
+  syncs?: true;
+};
 
 /** The providers a setup has, by name. */
 export type Providers = { readonly [Name in ProviderName]?: DataProvider };
@@ -82,6 +88,7 @@ export function route(providers: Providers, { keyFix }: { keyFix?: KeyFix } = {}
       return provider && implementation
         ? [
             {
+              provider: name,
               source: provider.name,
               implementation: implementation as unknown as Partial<Record<string, Method>>,
               ...(provider.syncs ? { syncs: true as const } : {}),
@@ -113,7 +120,17 @@ async function call(
   keyFix: KeyFix | undefined,
 ): Promise<Sourced<unknown>> {
   // The providers that serve this method: one may serve a capability's other methods only.
-  const serving = chain.filter((link) => link.implementation[method]);
+  const requested = method === "dailyPair" ? args[0] : [args[0]];
+  const isVietnamHistory =
+    capability === "priceHistory" &&
+    (method === "daily" || method === "dailyPair") &&
+    Array.isArray(requested) &&
+    requested.some((key) => typeof key === "string" && vietnamTicker(key));
+  // Keep explicit VN listings and their benchmark on the same market source.
+  const serving = chain.filter(
+    (link) =>
+      link.implementation[method] && (link.provider === "vietcap" ? isVietnamHistory : !isVietnamHistory),
+  );
   if (!serving.length) {
     throw new DataError(
       "not_configured",
