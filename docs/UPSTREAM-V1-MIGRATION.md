@@ -67,3 +67,7 @@ steps are pending; this PR remains a draft.
   The earlier successful TypeScript build is not a substitute for that test.
 - `git diff --check` passes excluding unchanged upstream font-license files,
   whose original CRLF/trailing spaces are preserved.
+- Full-repository Python Ruff reports 18 existing diagnostics in 13 legacy
+  files. Every affected file is byte-identical to `af6dae7`; the staging audit
+  passes. This existing CI failure is not waived by the successful scoped v1
+  lint, and must be resolved before this draft is considered merge-ready.
