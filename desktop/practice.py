@@ -465,8 +465,20 @@ class PracticeStore(Store):
                         )
                     ):
                         continue
+                    existing = db.execute(
+                        "SELECT payload FROM odd_lot_events WHERE ticker=? AND day=? AND cumulative=?",
+                        (ticker, today, event["cumulative_shares"]),
+                    ).fetchone()
+                    if existing:
+                        saved = json.loads(existing["payload"])
+                        fields = ("price_vnd", "shares", "previous_cumulative_shares", "cumulative_shares")
+                        if any(saved[key] != event[key] for key in fields):
+                            raise ValueError(
+                                "Giao dịch lô lẻ đã lưu thay đổi giá hoặc khối lượng; dừng đối soát tài khoản."
+                            )
+                        continue
                     cursor = db.execute(
-                        "INSERT OR IGNORE INTO odd_lot_events VALUES(?,?,?,?)",
+                        "INSERT INTO odd_lot_events VALUES(?,?,?,?)",
                         (ticker, today, event["cumulative_shares"], json.dumps(event)),
                     )
                     changed = changed or bool(cursor.rowcount)

@@ -737,11 +737,59 @@ def test_hose_odd_lot_uses_only_reconciled_post_approval_prints(tmp_path, monkey
     assert result["positions"][ticker]["available_quantity"] == 0
     retried = store.sync(candles, now=moment("09:19:01"), odd_quotes={ticker: quote})
     assert retried["orders"][0]["result"] == receipt
+    import copy
+
+    inconsistent = copy.deepcopy(quote)
+    inconsistent["sample"]["reconciled_updates"][-1]["price_vnd"] = 62400
+    before_conflict = store.snapshot()
+    with pytest.raises(ValueError, match="lô lẻ đã lưu thay đổi"):
+        store.sync(candles, now=moment("09:19:02"), odd_quotes={ticker: inconsistent})
+    assert store.snapshot() == before_conflict
+    retransmitted = copy.deepcopy(quote)
+    for row in retransmitted["sample"]["reconciled_updates"]:
+        row["observed_at"] = moment("09:19:00").isoformat()
+        row["board_server_clock"] = row["observed_at"]
+    replayed = store.sync(candles, now=moment("09:19:03"), odd_quotes={ticker: retransmitted})
+    assert replayed["orders"][0]["result"] == receipt
+
     settled = store.sync(
         {ticker: {**candles[ticker], "completed_sessions": [DAY, "2026-11-02", "2026-11-03"]}},
         now=datetime(2026, 11, 3, 15, tzinfo=TZ),
     )
     assert settled["positions"][ticker]["available_quantity"] == 3
+    clock[0] = datetime(2026, 11, 4, 9, 16, 30, tzinfo=TZ)
+    sale_day = clock[0].date().isoformat()
+    sale_bundle = {**bundle, "analysis_date": sale_day,
+                   "odd_lot_quote": {**bundle["odd_lot_quote"], "observed_at": clock[0].isoformat()}}
+    sale_decision = {"execution": {**decision["execution"], "action": "Sell", "limit_price": 63000}}
+    sale = store.proposal("sell", sale_decision, sale_bundle, "HOSE")
+    with pytest.raises(ValueError, match="[Xx]ác nhận"):
+        store.approve(sale["id"], sale["preview_hash"], {})
+    sign(store, sale, monkeypatch)
+    stamp = clock[0].replace(minute=17, second=10).isoformat()
+    sale_quote = {"ticker": ticker, "status": "observed", "sample": {"reconciled_updates": [{
+        "observed_at": stamp, "board_server_clock": stamp, "price_vnd": 63000,
+        "shares": 3, "previous_cumulative_shares": 150, "cumulative_shares": 153,
+    }]}}
+    next_print = {**sale_quote["sample"]["reconciled_updates"][0],
+                  "observed_at": clock[0].replace(minute=17, second=12).isoformat(),
+                  "board_server_clock": clock[0].replace(minute=17, second=12).isoformat(),
+                  "previous_cumulative_shares": 153, "cumulative_shares": 156}
+    sale_quote["sample"]["reconciled_updates"].append(next_print)
+    sold = store.sync({}, now=clock[0].replace(minute=19), odd_quotes={ticker: sale_quote})
+    sold_order = next(order for order in sold["orders"] if order["id"] == sale["id"])
+    assert sold_order["status"] == "FILLED" and sold_order["result"]["filled_quantity"] == 3
+    assert sold_order["result"]["fee"] == pytest.approx(472.5)
+    assert not sold["positions"]
+    assert sold["cash"] == pytest.approx(3_000_746.25)
+    assert sold["available_cash"] == pytest.approx(2_812_218.75)
+    cash_settled = store.sync(
+        {ticker: {**candles[ticker], "completed_sessions": [DAY, "2026-11-02", "2026-11-03",
+                                                         sale_day, "2026-11-05", "2026-11-06"]}},
+        now=datetime(2026, 11, 6, 15, tzinfo=TZ),
+    )
+    assert cash_settled["available_cash"] == pytest.approx(3_000_746.25)
+
 
 
 def test_background_tick_only_requests_market_data_for_approved_orders(tmp_path, monkeypatch):
