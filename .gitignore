@@ -238,3 +238,11 @@ reports/
 /config/desktop.json
 /config/desktop.json.tmp
 /config/desktop.before-*.json
+
+# Upstream v1 TypeScript runtime
+node_modules/
+dist/
+coverage/
+*.log
+.env
+dist-bin/
