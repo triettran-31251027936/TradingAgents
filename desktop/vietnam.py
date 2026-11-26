@@ -30,7 +30,7 @@ from tradingagents.dataflows.errors import NoMarketDataError
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 CHART = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
 FINANCE = "https://iq.vietcap.com.vn/api/iq-insight-service/v1/company"
-VERSION = 47
+VERSION = 48
 VERIFIED_SNAPSHOT_PREFIX = "Verified canonical VN snapshot (same source as other VN tools):\n"
 LOCK = threading.Lock()
 
@@ -924,6 +924,15 @@ def load(
             debt_notes = load_debt_notes(ticker, asof, metrics)
             if debt_notes:
                 sources.append(debt_notes["source"])
+        earnings_notes = {}
+        if not prices_only:
+            from desktop import earnings_notes as issuer_earnings
+
+            earnings_notes = issuer_earnings.load(ticker, asof, book, field)
+            if earnings_notes:
+                metrics.update(issuer_earnings.metrics(earnings_notes))
+                missing = missing_metrics(metrics)
+                sources.append(earnings_notes["source"])
         from desktop.financial_metrics import reconcile
 
         reconciliation = {
@@ -1239,6 +1248,7 @@ def load(
             "valuation_reconciliation": valuation_proof,
             "bank_reconciliation": bank_proof,
             "debt_notes": debt_notes,
+            "earnings_notes": earnings_notes,
             "cash_dividends": cash_dividend_evidence,
             "missing": missing,
             "warnings": warnings,
@@ -1347,6 +1357,8 @@ def capsule(bundle, *, compact=False):
     }
     if bundle.get("cash_dividends"):
         decoded["cash_dividends"] = bundle["cash_dividends"]
+    if bundle.get("earnings_notes"):
+        decoded["earnings_notes"] = bundle["earnings_notes"]
     if bundle.get("debt_notes"):
         decoded["debt_notes"] = bundle["debt_notes"]
     canonical = bundle.get("metrics", {})

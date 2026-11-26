@@ -161,6 +161,7 @@ def artifacts(folder, quant, runtime, usage, store, report_id):
             "valuation_reconciliation": quant.get("valuation_reconciliation", {}),
             "bank_reconciliation": quant.get("bank_reconciliation", {}),
             "debt_notes": quant.get("debt_notes", {}),
+            "earnings_notes": quant.get("earnings_notes", {}),
             "cash_dividends": quant.get("cash_dividends", {}),
         }
     if runtime:
@@ -251,6 +252,17 @@ def append_evidence(path, ticker, state, settings, result, *, html=True):
                 + ". Source: Vietcap company/details. Current observation, not a historical profile archive.\n\n"
             )
 
+        earnings = q.get("earnings_notes") or {}
+        if earnings.get("status") == "available":
+            text += "\n### EPS theo thuyết minh doanh nghiệp\n\n"
+            text += (
+                f"EPS cơ bản và suy giảm chín tháng đến {cell(earnings['period_end'])} "
+                f"là {earnings['basic_eps_vnd']:,} VND/cp. "
+                f"Lợi nhuận dùng tính EPS {earnings['earnings_for_eps_vnd']:,} VND "
+                f"trên {earnings['weighted_average_common_shares']:,} cổ phiếu bình quân đã điều chỉnh. "
+                "Có điều chỉnh cổ tức ưu đãi và mua lại cổ phần ưu đãi của công ty con. "
+                f"Thuyết minh {earnings['note']}, trang PDF {earnings['pdf_page']}.\n\n"
+            )
         notes = q.get("debt_notes") or {}
         if notes.get("status") == "available":
             text += "\n### Số dư trái phiếu theo tháng đáo hạn công bố\n\n"
